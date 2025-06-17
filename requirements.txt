@@ -1,0 +1,8 @@
+openai
+langchain
+langchain-openai
+langchain-community
+streamlit
+langchain-experimental
+supabase
+python-dotenv
