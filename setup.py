@@ -7,10 +7,9 @@ load_dotenv()
 
 # Setup
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
+OPENAI_API_KEY = st.secrets['OPENAI_API_KEY']
+SUPABASE_URL = st.secrets['SUPABASE_URL']
+SUPABASE_KEY = st.secrets['SUPABASE_KEY']
 # System prompt for the assistant
 SYSTEM_PROMPT = """You are a professional Order Status Assistant. You help customers check their order status using the database information provided.
 
