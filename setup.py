@@ -1,13 +1,13 @@
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
 # Setup
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -32,13 +32,12 @@ Order Status Meanings:
 
 def chatmodel():
     
-    return ChatOpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=OPENAI_API_KEY,
-        model="meta-llama/llama-3.3-8b-instruct:free",
-        temperature=0.2
+    return ChatGoogleGenerativeAI(
+        model="gemini-1.5-flash",        # Use a valid Gemini model name
+        google_api_key=GEMINI_API_KEY,   # The correct parameter name
+        temperature=0.2,
+        convert_system_message_to_human=True # Often helpful for compatibility
     )
-
 def supabase_client():
     
     return create_client(SUPABASE_URL, SUPABASE_KEY)
