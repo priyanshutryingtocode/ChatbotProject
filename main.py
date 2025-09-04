@@ -61,6 +61,7 @@ def render_footer():
 
     st.markdown("---")
     st.markdown("🔧 *For order modifications, please contact our support team*")
+    st.markdown("Made by Priyanshu Srivastava")
 
 def main():
 
