@@ -26,7 +26,7 @@ A LangChain-powered Streamlit application for checking order status using natura
 2. **Environment Variables**
    Create a `.env` file with:
    ```
-   OPENAI_API_KEY=your_openrouter_api_key
+   GEMINI_API_KEY=your_api_key
    SUPABASE_URL=your_supabase_url
    SUPABASE_KEY=your_supabase_key
    ```
