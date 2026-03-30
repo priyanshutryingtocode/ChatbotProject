@@ -35,10 +35,9 @@ Order Status Meanings:
 def chatmodel():
     
     return ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",        # Use a valid Gemini model name
-        google_api_key=GEMINI_API_KEY,   # The correct parameter name
+        model="gemini-2.5-flash",       
+        google_api_key=GEMINI_API_KEY,   
         temperature=0.2,
-        convert_system_message_to_human=True # Often helpful for compatibility
     )
 def supabase_client():
     
