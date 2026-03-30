@@ -1,4 +1,4 @@
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from setup import chatmodel, SYSTEM_PROMPT
 from query import query_database, format_database_context
 
