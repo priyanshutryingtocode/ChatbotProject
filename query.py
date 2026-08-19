@@ -60,6 +60,12 @@ def extract_info_from_query(query):
     
     return info
 
+
+def has_lookup_identifier(query: str) -> bool:
+    """Whether a message explicitly asks the database to identify an order/customer."""
+    info = extract_info_from_query(query)
+    return any(info.values())
+
 def query_database(user_query):
 
     extracted_info = extract_info_from_query(user_query)

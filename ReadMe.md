@@ -29,10 +29,16 @@ A LangChain-powered Streamlit application for checking order status using natura
    GEMINI_API_KEY=your_api_key
    SUPABASE_URL=your_supabase_url
    SUPABASE_KEY=your_supabase_key
+   SUPABASE_SERVICE_ROLE_KEY=server_only_service_role_key
    ```
 
 3. **Database Schema**
-   Ensure your Supabase table `Order_Status` has these columns:
+   Apply `supabase/migrations/20260819_normalized_order_schema.sql`. The app
+   uses the normalized `customers`, `orders`, `order_items`, `shipments`, and
+   `order_events` tables. `SUPABASE_SERVICE_ROLE_KEY` is required only by the
+   server-side support app and the seeder; never expose it in a browser client.
+
+   The legacy `Order_Status` table schema was:
    - order_id (integer)
    - order_status (text)
    - customer_name (text)

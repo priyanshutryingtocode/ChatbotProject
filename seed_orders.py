@@ -50,10 +50,7 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
     subtotal = sum((price * quantity for price in item_prices), Decimal("0"))
     shipping_fee = Decimal("0") if status == "Cancelled" else Decimal(str(random.choice([0, 4, 7, 12])))
     tax_amount = (subtotal * Decimal("0.08")).quantize(Decimal("0.01"))
-    order_uuid = str(uuid4())
-
     order = {
-        "id": order_uuid,
         "public_order_id": order_id,
         "customer_id": customer_id,
         "status": status,
@@ -70,7 +67,7 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
     items = [
         {
             "id": str(uuid4()),
-            "order_id": order_uuid,
+            "order_id": order_id,
             "product_sku": f"DEMO-{index + 1:03d}",
             "product_name": item,
             "quantity": quantity,
@@ -82,7 +79,7 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
     if status not in {"Cancelled", "Processing"}:
         shipment = {
             "id": str(uuid4()),
-            "order_id": order_uuid,
+            "order_id": order_id,
             "carrier": "DemoCarrier",
             "tracking_number": f"DEMO{order_id}",
             "delivery_driver_name": fake.name(),
@@ -95,20 +92,20 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
         "Delivered": "delivered", "Cancelled": "cancelled", "Failed Delivery": "failed_delivery",
     }[status]
     event = {
-        "order_id": order_uuid,
+        "order_id": order_id,
         "event_type": "created",
         "event_at": order["ordered_at"],
         "message": "Order created",
     }
     status_event = {
-        "order_id": order_uuid,
+        "order_id": order_id,
         "event_type": event_type,
         "event_at": (shipment or {"estimated_delivery_at": order["ordered_at"]})["estimated_delivery_at"],
         "message": f"Order status: {status}",
     }
     payment = {
         "id": str(uuid4()),
-        "order_id": order_uuid,
+        "order_id": order_id,
         "provider": "demo-payment-provider",
         "provider_payment_id": f"demo_payment_{order_id}",
         "amount": str(subtotal + shipping_fee + tax_amount),
@@ -151,7 +148,7 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
             order, items, shipment, created_event, status_event, payment = make_order(fake, customer_id, order_id)
             records["orders"].append(order)
             records["order_delivery_addresses"].append({
-                "order_id": order["id"], "recipient_name": full_name, "line1": address["line1"],
+                "order_id": order["public_order_id"], "recipient_name": full_name, "line1": address["line1"],
                 "city": address["city"], "state_or_region": address["state_or_region"],
                 "postal_code": address["postal_code"], "country_code": address["country_code"],
             })
@@ -186,13 +183,15 @@ def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
             batch = rows[start : start + batch_size]
             client.table(table).insert(batch).execute()
             print(f"Inserted {start + 1}-{start + len(batch)} of {len(rows)} {table} records.")
+    client.rpc("sync_order_number_sequence").execute()
+    print("Synchronized the next automatic order number.")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create synthetic records for the normalized order schema using Faker.")
     parser.add_argument("--customers", type=int, default=50, help="Number of unique fake customers (default: 50).")
     parser.add_argument("--orders-per-customer", type=int, default=2, help="Orders per customer (default: 2).")
-    parser.add_argument("--start-order-id", type=int, default=900000, help="First synthetic order ID (default: 900000).")
+    parser.add_argument("--start-order-id", type=int, default=1, help="First synthetic order ID, from 1 to 1000 (default: 1).")
     parser.add_argument("--seed", type=int, default=20260819, help="Seed for reproducible data.")
     parser.add_argument("--output", type=Path, default=Path("data/normalized_fake_orders.json"), help="JSON output path.")
     parser.add_argument("--insert", action="store_true", help="Insert records into Supabase after writing JSON.")
@@ -204,6 +203,9 @@ def main() -> None:
     args = parse_args()
     if args.customers < 1 or args.orders_per_customer < 1 or args.batch_size < 1:
         raise ValueError("--customers, --orders-per-customer, and --batch-size must be positive.")
+    generated_order_count = args.customers * args.orders_per_customer
+    if args.start_order_id < 1 or args.start_order_id + generated_order_count - 1 > 1000:
+        raise ValueError("Generated order IDs must stay within the supported range of 1 to 1000.")
 
     records = make_records(args.customers, args.orders_per_customer, args.start_order_id, args.seed)
     args.output.parent.mkdir(parents=True, exist_ok=True)

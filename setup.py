@@ -2,7 +2,6 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from langchain_google_genai import ChatGoogleGenerativeAI
-import streamlit as st
 
 
 load_dotenv()
@@ -12,6 +11,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 # System prompt for the assistant
 SYSTEM_PROMPT = """You are a professional Order Status Assistant. You help customers check their order status using the database information provided.
@@ -39,6 +39,11 @@ def chatmodel():
         google_api_key=GEMINI_API_KEY,   
         temperature=0.2,
     )
-def supabase_client():
-    
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+def supabase_server_client() -> Client:
+    """Create a server-only Supabase client for the internal support workspace."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for database access. "
+            "Add the service-role key only to the server's .env file."
+        )
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
