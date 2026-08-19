@@ -15,7 +15,6 @@ import random
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
 
 from dotenv import load_dotenv
 from faker import Faker
@@ -37,7 +36,7 @@ def normalized_phone(fake: Faker) -> str:
     return "".join(character for character in fake.numerify("##########") if character.isdigit())
 
 
-def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list[dict], dict | None, dict, dict, dict]:
+def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list[dict], dict | None, dict, dict, dict]:
     status = random.choices(STATUSES, weights=STATUS_WEIGHTS, k=1)[0]
     order_date = fake.date_between(start_date="-90d", end_date="today")
     delivery_date = order_date + timedelta(days=random.randint(2, 7))
@@ -66,7 +65,6 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
     }
     items = [
         {
-            "id": str(uuid4()),
             "order_id": order_id,
             "product_sku": f"DEMO-{index + 1:03d}",
             "product_name": item,
@@ -78,7 +76,6 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
     shipment = None
     if status not in {"Cancelled", "Processing"}:
         shipment = {
-            "id": str(uuid4()),
             "order_id": order_id,
             "carrier": "DemoCarrier",
             "tracking_number": f"DEMO{order_id}",
@@ -104,7 +101,6 @@ def make_order(fake: Faker, customer_id: str, order_id: int) -> tuple[dict, list
         "message": f"Order status: {status}",
     }
     payment = {
-        "id": str(uuid4()),
         "order_id": order_id,
         "provider": "demo-payment-provider",
         "provider_payment_id": f"demo_payment_{order_id}",
@@ -127,7 +123,7 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
     )}
     for customer_number in range(customers):
         full_name = fake.name()
-        customer_id = str(uuid4())
+        customer_id = customer_number + 1
         customer = {
             "id": customer_id,
             "customer_name": full_name,
@@ -138,7 +134,7 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
         customer.pop("customer_name")
         records["customers"].append(customer)
         address = {
-            "id": str(uuid4()), "customer_id": customer_id, "label": "Home", "line1": fake.street_address(),
+            "customer_id": customer_id, "label": "Home", "line1": fake.street_address(),
             "city": fake.city(), "state_or_region": fake.state_abbr(), "postal_code": fake.postcode(),
             "country_code": "US", "is_default": True,
         }
@@ -184,6 +180,7 @@ def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
             client.table(table).insert(batch).execute()
             print(f"Inserted {start + 1}-{start + len(batch)} of {len(rows)} {table} records.")
     client.rpc("sync_order_number_sequence").execute()
+    client.rpc("sync_simple_id_sequences").execute()
     print("Synchronized the next automatic order number.")
 
 
