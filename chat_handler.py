@@ -58,6 +58,11 @@ class OrderChatHandler:
                 db_context = self.current_order_context
             else:
                 db_context = None
+
+            deterministic_response = self._format_order_follow_up(user_input)
+            if deterministic_response:
+                self.conversation_history.append(("assistant", deterministic_response))
+                return deterministic_response, {}
             
             
             if db_context:
@@ -134,3 +139,37 @@ class OrderChatHandler:
         if shipment.get("tracking_number"):
             lines.append(f"Tracking number: `{shipment['tracking_number']}`.")
         return "\n\n".join(lines)
+
+    def _format_order_follow_up(self, user_input):
+        """Answer high-risk order facts without relying on the language model."""
+        if not self.last_db_results:
+            return None
+
+        orders = []
+        for value in self.last_db_results.values():
+            orders.extend(value if isinstance(value, list) else [value])
+        if len(orders) != 1:
+            return None
+
+        order = orders[0]
+        shipment = (order.get("shipments") or [{}])[0]
+        message = user_input.lower()
+        order_number = format_order_number(order.get("public_order_id"))
+
+        if any(word in message for word in ("track", "tracking number", "tracking")):
+            tracking = shipment.get("tracking_number")
+            return f"The tracking number for order #{order_number} is `{tracking}`." if tracking else f"Tracking information is not available yet for order #{order_number}."
+        if any(word in message for word in ("when", "arrive", "delivery", "deliver")):
+            delivered = shipment.get("delivered_at")
+            estimated = shipment.get("estimated_delivery_at")
+            if delivered:
+                return f"Order #{order_number} was delivered on **{format_timestamp(delivered)}**."
+            if estimated:
+                return f"The estimated delivery for order #{order_number} is **{format_timestamp(estimated)}**."
+            return f"There is no delivery estimate available yet for order #{order_number}."
+        if any(word in message for word in ("status", "where is", "where's")):
+            status = order.get("status", "Unknown")
+            return f"Order #{order_number} is currently **{status}**. {STATUS_EXPLANATIONS.get(status, '')}".strip()
+        if any(word in message for word in ("payment", "paid", "refund")):
+            return f"Payment status for order #{order_number}: **{order.get('payment_status', 'Unknown')}**."
+        return None

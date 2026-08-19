@@ -23,7 +23,7 @@ def extract_info_from_query(query):
         for match in matches:
             try:
                 order_id = int(match)
-                if str(order_id) not in info['order_ids']:
+                if 1 <= order_id <= 1000 and str(order_id) not in info['order_ids']:
                     info['order_ids'].append(str(order_id))
             except ValueError:
                 continue
@@ -64,7 +64,11 @@ def extract_info_from_query(query):
 def has_lookup_identifier(query: str) -> bool:
     """Whether a message explicitly asks the database to identify an order/customer."""
     info = extract_info_from_query(query)
-    return any(info.values())
+    if any(info.values()):
+        return True
+    # Treat an out-of-range order number as a lookup too, so it produces a
+    # grounded “not found” response rather than a free-form model answer.
+    return bool(re.search(r"(?:\border\s*(?:id|number)?\s*[:#]?\s*|#)\d+", query, re.IGNORECASE))
 
 def query_database(user_query):
 
@@ -94,21 +98,26 @@ def query_database(user_query):
     return results
 
 def format_database_context(db_results):
-
-    db_context = "\n\n=== DATABASE RESULTS ===\n"
-    if db_results:
-        for key, value in db_results.items():
-            db_context += f"\n{key.upper()}:\n"
-            if isinstance(value, list):
-                for i, order in enumerate(value, 1):
-                    
-                    order_str = str(order).replace('{', '{{').replace('}', '}}')
-                    db_context += f"Order {i}: {order_str}\n"
-            else:
-               
-                value_str = str(value).replace('{', '{{').replace('}', '}}')
-                db_context += f"{value_str}\n"
-    else:
-        db_context += "No matching orders found.\n"
-    db_context += "=== END DATABASE RESULTS ===\n"
-    return db_context
+    """Serialize only needed, labelled database values for the conversational model."""
+    lines = ["=== DATABASE RESULTS (DATA ONLY) ==="]
+    for value in db_results.values():
+        orders = value if isinstance(value, list) else [value]
+        for order in orders:
+            customer = order.get("customers") or {}
+            shipment = (order.get("shipments") or [{}])[0]
+            items = order.get("order_items") or []
+            lines.extend(
+                [
+                    f"Order number: {order.get('public_order_id')}",
+                    f"Status: {order.get('status')}",
+                    f"Payment status: {order.get('payment_status')}",
+                    f"Customer name: {customer.get('full_name')}",
+                    f"Tracking number: {shipment.get('tracking_number') or 'Not available'}",
+                    f"Estimated delivery: {shipment.get('estimated_delivery_at') or 'Not available'}",
+                    f"Delivered at: {shipment.get('delivered_at') or 'Not available'}",
+                    "Items: " + ", ".join(item.get("product_name", "Unknown item") for item in items),
+                    "---",
+                ]
+            )
+    lines.append("=== END DATABASE RESULTS ===")
+    return "\n".join(lines)

@@ -26,14 +26,17 @@ ITEMS = [
     "Wireless Headphones", "USB-C Charger", "Running Shoes", "Coffee Maker",
     "Laptop Stand", "Water Bottle", "Backpack", "Desk Lamp", "Phone Case",
     "Bluetooth Speaker", "Yoga Mat", "Smart Watch",
+    "Power Bank", "Mechanical Keyboard", "Wireless Mouse",
 ]
 TIME_SLOTS = ["9 AM - 12 PM", "12 PM - 3 PM", "3 PM - 6 PM", "6 PM - 9 PM"]
 PRIORITIES = ["Standard", "Standard", "Standard", "Express", "Priority"]
 
 
 def normalized_phone(fake: Faker) -> str:
-    """Return a 10-digit phone number compatible with the app's current lookup."""
-    return "".join(character for character in fake.numerify("##########") if character.isdigit())
+    """Return a realistic Indian 10-digit mobile number."""
+    first_digit = random.choice("6789")
+    remaining = "".join(random.choice("0123456789") for _ in range(9))
+    return first_digit + remaining
 
 
 def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list[dict], dict | None, dict, dict, dict]:
@@ -45,17 +48,17 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
     )
     quantity = random.randint(1, 4)
     selected_items = random.sample(ITEMS, k=min(random.randint(1, 3), len(ITEMS)))
-    item_prices = [Decimal(str(random.randint(12, 120))) for _ in selected_items]
+    item_prices = [Decimal(str(random.choice([299, 399, 499, 599, 799, 999, 1299, 1499, 1999, 2499, 2999, 3999, 4999, 6999]))) for _ in selected_items]
     subtotal = sum((price * quantity for price in item_prices), Decimal("0"))
-    shipping_fee = Decimal("0") if status == "Cancelled" else Decimal(str(random.choice([0, 4, 7, 12])))
-    tax_amount = (subtotal * Decimal("0.08")).quantize(Decimal("0.01"))
+    shipping_fee = Decimal("0") if status == "Cancelled" else Decimal(str(random.choice([0, 49, 69, 99, 149])))
+    tax_amount = (subtotal * Decimal("0.18")).quantize(Decimal("0.01"))
     order = {
         "public_order_id": order_id,
         "customer_id": customer_id,
         "status": status,
         "priority": random.choice(PRIORITIES),
         "payment_status": "Refunded" if status == "Cancelled" else "Paid",
-        "currency": "USD",
+        "currency": "INR",
         "subtotal": str(subtotal),
         "shipping_fee": str(shipping_fee),
         "tax_amount": str(tax_amount),
@@ -77,8 +80,8 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
     if status not in {"Cancelled", "Processing"}:
         shipment = {
             "order_id": order_id,
-            "carrier": "DemoCarrier",
-            "tracking_number": f"DEMO{order_id}",
+            "carrier": random.choice(["Delhivery", "Blue Dart", "DTDC", "Ecom Express", "XpressBees"]),
+            "tracking_number": f"IN{order_id:08d}",
             "delivery_driver_name": fake.name(),
             "estimated_delivery_at": estimated.isoformat(),
             "delivered_at": (estimated + timedelta(minutes=random.randint(-45, 120))).isoformat() if status == "Delivered" else None,
@@ -105,7 +108,7 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
         "provider": "demo-payment-provider",
         "provider_payment_id": f"demo_payment_{order_id}",
         "amount": str(subtotal + shipping_fee + tax_amount),
-        "currency": "USD",
+        "currency": "INR",
         "status": "Refunded" if status == "Cancelled" else "Paid",
         "paid_at": order["ordered_at"],
     }
@@ -115,7 +118,7 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
 
 def make_records(customers: int, orders_per_customer: int, start_order_id: int, seed: int) -> dict[str, list[dict]]:
     random.seed(seed)
-    fake = Faker("en_US")
+    fake = Faker("en_IN")
     fake.seed_instance(seed)
     records = {table: [] for table in (
         "customers", "customer_addresses", "orders", "order_delivery_addresses",
@@ -135,8 +138,8 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
         records["customers"].append(customer)
         address = {
             "customer_id": customer_id, "label": "Home", "line1": fake.street_address(),
-            "city": fake.city(), "state_or_region": fake.state_abbr(), "postal_code": fake.postcode(),
-            "country_code": "US", "is_default": True,
+            "city": fake.city(), "state_or_region": fake.state(), "postal_code": fake.postcode(),
+            "country_code": "IN", "is_default": True,
         }
         records["customer_addresses"].append(address)
         for order_number in range(orders_per_customer):
