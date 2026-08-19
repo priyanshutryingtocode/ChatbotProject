@@ -61,6 +61,30 @@ A LangChain-powered Streamlit application for checking order status using natura
    streamlit run main.py
    ```
 
+## Synthetic development data
+
+Use the included Faker seeder to create realistic, non-real customer and order
+records. It writes JSON by default so the generated data can be reviewed before
+any database change:
+
+```bash
+python seed_orders.py --customers 100 --orders-per-customer 3
+```
+
+This creates 300 records in `data/fake_orders.json`, using reproducible order
+IDs beginning at `900000`. Confirm this range does not overlap your existing
+orders, then insert them into Supabase:
+
+```bash
+python seed_orders.py --customers 100 --orders-per-customer 3 --insert
+```
+
+The normalized-schema seeder requires `SUPABASE_URL` and a separate
+`SUPABASE_SERVICE_ROLE_KEY` only when `--insert` is specified. This privileged
+key bypasses RLS, so use it only for local/admin seeding and never expose it to
+the Streamlit client. Use this data only in development or a dedicated demo
+project—not in a production database with real customers.
+
 ## Features
 
 - **Natural Language Queries**: Ask questions like "Check order 12345" or "Orders for john@email.com"
