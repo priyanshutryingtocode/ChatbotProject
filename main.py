@@ -5,7 +5,7 @@ from database import format_order_for_display, format_order_number, format_times
 from sidebar import render_sidebar
 
 
-st.set_page_config(page_title="Order Support", page_icon="📦", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Order Status Assistant", page_icon="📦", layout="wide", initial_sidebar_state="expanded")
 
 
 def apply_theme() -> None:
@@ -70,7 +70,7 @@ def handle_user_input(user_input: str) -> None:
 
 def render_chat_interface() -> None:
     if not st.session_state.messages:
-        st.info("Start with an order number, customer email, phone number, or name. Example: `Where is order 900000?`")
+        st.info("For order details I need two details: your order number plus your email, phone number, or name. Example: `Where is order 900000, email a@b.com`?")
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):

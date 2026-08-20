@@ -118,6 +118,51 @@ def search_orders_by_name(name: str) -> list[dict]:
         return []
 
 
+def find_orders(criteria: dict, require_order_id: bool = True) -> list[dict]:
+    """Return orders matching all provided identity fields.
+
+    Requires an order ID plus at least one of email, phone, or name. An order
+    is returned only when every provided field points to the same order, so a
+    mismatched field never leaks partial results.
+
+    Raises ValueError when the required identity fields are missing.
+    """
+    provided = {
+        key: str(value).strip() if value is not None else ""
+        for key, value in criteria.items()
+    }
+    provided = {key: value for key, value in provided.items() if value}
+
+    if require_order_id and "order_id" not in provided:
+        raise ValueError("An order number is required to look up an order.")
+    if len(provided) < 2:
+        raise ValueError("Two identity fields are required to look up an order.")
+
+    result_sets: dict[str, list[dict]] = {}
+    if "order_id" in provided:
+        order = get_order_by_id(provided["order_id"])
+        result_sets["order_id"] = [order] if order else []
+    if "email" in provided:
+        result_sets["email"] = get_orders_by_email(provided["email"])
+    if "phone" in provided:
+        result_sets["phone"] = get_orders_by_phone(provided["phone"])
+    if "name" in provided:
+        result_sets["name"] = search_orders_by_name(provided["name"])
+
+    if any(not orders for orders in result_sets.values()):
+        return []
+
+    first_key = next(iter(result_sets))
+    common_ids = {order["public_order_id"] for order in result_sets[first_key]}
+    for orders in result_sets.values():
+        common_ids &= {order["public_order_id"] for order in orders}
+    if not common_ids:
+        return []
+
+    by_id = {order["public_order_id"]: order for order in result_sets[first_key]}
+    return [by_id[order_id] for order_id in sorted(common_ids)]
+
+
 def format_order_for_display(order: dict | None) -> str:
     if not order:
         return "No order data available"

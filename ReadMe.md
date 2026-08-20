@@ -93,10 +93,11 @@ project—not in a production database with real customers.
 
 ## Features
 
-- **Natural Language Queries**: Ask questions like "Check order 12345" or "Orders for john@email.com"
-- **Multiple Search Methods**: Search by order ID, email, phone, or customer name
+- **Natural Language Queries**: Ask questions like "Check order 12345 with email john@email.com"
+- **Two-Field Verification**: Every lookup requires an order number plus one more identity field (email, phone, or customer name). The provided fields must match the same order before any data is returned, so a single known field can never expose a customer's order details.
+- **Multiple Search Methods**: Order ID must be combined with an email, phone, or customer name
 - **LangChain Integration**: Uses LangChain for prompt management and LLM interaction
-- **Quick Lookup Sidebar**: Direct database queries without chat interface
+- **Quick Lookup Sidebar**: Direct database searches using the same two-field requirement
 - **Session Management**: Maintains conversation context and database results
 
 ## File Descriptions
@@ -133,16 +134,16 @@ project—not in a production database with real customers.
 
 ## Usage Examples
 
-**Chat Interface:**
-- "Check my order 12345"
-- "Orders for customer@email.com"
-- "Show me orders for John Smith"
-- "Status of order #67890"
+**Chat Interface** (order number + one more detail in the same message):
+- "Check my order 12345, email john@email.com"
+- "Status of order #67890, phone 1234567890"
+- "Show order 12345 for John Smith"
+
+If you supply only one field, the assistant asks for a second detail before sharing anything.
 
 **Sidebar Quick Lookup:**
-- Enter order ID directly
-- Search by email address
-- Look up by phone number
+- Enter an order number (required)
+- Add one more detail: email address, phone number, or customer name
 
 ## Error Handling
 

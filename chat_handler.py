@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from setup import chatmodel, SYSTEM_PROMPT
-from query import format_database_context, has_lookup_identifier, query_database
+from query import count_lookup_fields, extract_info_from_query, format_database_context, has_lookup_identifier, query_database
 from database import format_order_for_display, format_order_number, format_timestamp
 
 
@@ -23,19 +23,40 @@ class OrderChatHandler:
     def process_user_message(self, user_input):
         
         if not user_input or not user_input.strip():
-            return "Hello! I'm here to help you check your order status. Please provide your order ID, email, phone number, or name.", {}
-        
+            return "Hello! I'm here to help you check your order status. To look up an order I need two details: your order number plus your email, phone number, or name.", {}
+
         try:
        
             self.conversation_history.append(("human", user_input))
             
           
             is_explicit_lookup = has_lookup_identifier(user_input)
+            has_two_fields = count_lookup_fields(user_input) >= 2
+            referenced_order_ids = {int(order_id) for order_id in extract_info_from_query(user_input)["order_ids"]}
+            verified_order_ids = self._verified_order_ids()
+            references_verified_order = bool(
+                verified_order_ids and referenced_order_ids and referenced_order_ids <= verified_order_ids
+            )
+            is_verified_follow_up = is_explicit_lookup and not has_two_fields and references_verified_order
+
+            # A new lookup needs an order number plus one more identity field.
+            # Refuse to answer (or fall back to prior context) without both, so
+            # a single known field can never expose customer data. Follow-ups
+            # that only re-reference an already-verified order are allowed.
+            if is_explicit_lookup and not is_verified_follow_up and not has_two_fields:
+                response = (
+                    "I need two details to verify your order before I can share anything: "
+                    "your order number plus your email, phone number, or name. "
+                    "For example: `order 123, email a@b.com`."
+                )
+                self.conversation_history.append(("assistant", response))
+                return response, {}
+
             db_results = query_database(user_input)
 
             # Database identity lookups must never fall back to previous order
             # context. That could expose or describe the wrong order.
-            if is_explicit_lookup:
+            if is_explicit_lookup and not is_verified_follow_up:
                 if not db_results:
                     self.current_order_context = None
                     self.last_db_results = None
@@ -101,6 +122,19 @@ class OrderChatHandler:
         self.conversation_history = []
         self.current_order_context = None
         self.last_db_results = None
+
+    def _verified_order_ids(self) -> set[int]:
+        """Order IDs established by the last successful two-field lookup."""
+        verified = set()
+        if not self.last_db_results:
+            return verified
+        for value in self.last_db_results.values():
+            orders = value if isinstance(value, list) else [value]
+            for order in orders:
+                order_id = order.get("public_order_id")
+                if order_id is not None:
+                    verified.add(int(order_id))
+        return verified
     
     def get_conversation_history(self):
         

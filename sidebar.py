@@ -1,48 +1,41 @@
-"""Sidebar controls for fast, validated manual order lookup."""
+"""Sidebar controls for fast, validated two-field manual order lookup."""
 
 import re
 
 import streamlit as st
 
-from database import (
-    get_order_by_id,
-    get_orders_by_email,
-    get_orders_by_phone,
-    search_orders_by_name,
-)
-
-LOOKUP_OPTIONS = {
-    "Order ID": "Search a single order number, e.g. 900000",
-    "Email address": "Search all orders for an exact email address",
-    "Phone number": "Use a 10-digit phone number; formatting is accepted",
-    "Customer name": "Search a full or partial customer name",
-}
+from database import find_orders
 
 
-def _validate_lookup(lookup_type: str, value: str) -> str | None:
-    value = value.strip()
-    if not value:
-        return "Enter a value to search."
-    if lookup_type == "Order ID" and not value.isdigit():
+def _validate_fields(order_id: str, email: str, phone: str, name: str) -> str | None:
+    order_id = order_id.strip()
+    email = email.strip()
+    phone = phone.strip()
+    name = name.strip()
+    if not order_id:
+        return "An order number is required to search."
+    if not order_id.isdigit():
         return "Order ID must contain numbers only."
-    if lookup_type == "Email address" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+    if not any((email, phone, name)):
+        return "Add at least one more detail: email, phone number, or customer name."
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return "Enter a valid email address."
-    if lookup_type == "Phone number" and len(re.sub(r"\D", "", value)) < 10:
+    if phone and len(re.sub(r"\D", "", phone)) < 10:
         return "Enter at least 10 phone digits."
-    if lookup_type == "Customer name" and len(value) < 2:
+    if name and len(name) < 2:
         return "Enter at least two characters of the customer's name."
     return None
 
 
-def _run_lookup(lookup_type: str, value: str) -> list[dict]:
-    if lookup_type == "Order ID":
-        order = get_order_by_id(value)
-        return [order] if order else []
-    if lookup_type == "Email address":
-        return get_orders_by_email(value)
-    if lookup_type == "Phone number":
-        return get_orders_by_phone(value)
-    return search_orders_by_name(value)
+def _run_lookup(order_id: str, email: str, phone: str, name: str) -> list[dict]:
+    criteria = {"order_id": order_id}
+    if email.strip():
+        criteria["email"] = email.strip()
+    if phone.strip():
+        criteria["phone"] = phone.strip()
+    if name.strip():
+        criteria["name"] = name.strip()
+    return find_orders(criteria, require_order_id=True)
 
 
 def render_sidebar() -> None:
@@ -50,29 +43,24 @@ def render_sidebar() -> None:
         st.header("Manual lookup")
         st.caption("Run a direct database search without using the assistant.")
 
-        lookup_type = st.selectbox("Search by", options=list(LOOKUP_OPTIONS), key="lookup_type")
-        st.caption(LOOKUP_OPTIONS[lookup_type])
         with st.form("manual_lookup_form", clear_on_submit=False):
-            if lookup_type == "Order ID":
-                lookup_value = f"{st.number_input('Order number', min_value=1, max_value=1000, value=1, step=1, format='%04d', key='lookup_order_number'):04d}"
-            else:
-                lookup_value = st.text_input(
-                    "Search value",
-                    placeholder="Enter the value to search",
-                    key="lookup_value",
-                    help="Use the same customer information stored in the order system.",
-                )
+            order_id = f"{st.number_input('Order number', min_value=1, max_value=1000, value=1, step=1, format='%04d', key='lookup_order_number'):04d}"
+            st.caption("Add at least one more detail to verify the order before searching.")
+            email = st.text_input("Email address (optional)", placeholder="you@example.com", key="lookup_email")
+            phone = st.text_input("Phone number (optional)", placeholder="10-digit number", key="lookup_phone")
+            name = st.text_input("Customer name (optional)", placeholder="Full or partial name", key="lookup_name")
             submitted = st.form_submit_button("Search orders", use_container_width=True, type="primary")
 
         if submitted:
-            validation_error = _validate_lookup(lookup_type, lookup_value)
+            validation_error = _validate_fields(order_id, email, phone, name)
             if validation_error:
                 st.session_state.pop("manual_lookup_results", None)
                 st.error(validation_error)
             else:
+                secondary = next((value for value in (email, phone, name) if value.strip()), "")
                 with st.spinner("Searching orders..."):
-                    st.session_state.manual_lookup_results = _run_lookup(lookup_type, lookup_value.strip())
-                st.session_state.manual_lookup_label = f"{lookup_type}: {lookup_value.strip()}"
+                    st.session_state.manual_lookup_results = _run_lookup(order_id, email, phone, name)
+                st.session_state.manual_lookup_label = f"Order {order_id} + {secondary.strip()}"
 
         if "manual_lookup_results" in st.session_state:
             st.divider()

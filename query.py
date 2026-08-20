@@ -1,10 +1,5 @@
 import re
-from database import (
-    get_order_by_id,
-    get_orders_by_email,
-    get_orders_by_phone,
-    search_orders_by_name
-)
+from database import find_orders
 
 def extract_info_from_query(query):
 
@@ -54,11 +49,17 @@ def extract_info_from_query(query):
     for pattern in name_patterns:
         matches = re.findall(pattern, query, re.IGNORECASE)
         for name in matches:
-            clean_name = name.strip()
+            clean_name = re.sub(r'^(?:my|i|is|am|are)\s+', '', name.strip(), flags=re.IGNORECASE)
             if len(clean_name) > 2 and not any(c.isdigit() for c in clean_name):
                 info['names'].append(clean_name)
     
     return info
+
+
+def count_lookup_fields(query: str) -> int:
+    """Number of distinct identity field types present (order id, email, phone, name)."""
+    info = extract_info_from_query(query)
+    return sum(1 for values in info.values() if values)
 
 
 def has_lookup_identifier(query: str) -> bool:
@@ -70,32 +71,26 @@ def has_lookup_identifier(query: str) -> bool:
     # grounded “not found” response rather than a free-form model answer.
     return bool(re.search(r"(?:\border\s*(?:id|number)?\s*[:#]?\s*|#)\d+", query, re.IGNORECASE))
 
-def query_database(user_query):
 
+def query_database(user_query):
+    """Look up orders only when an order number and one more identity field are
+    provided. Every supplied field must match the same order before anything
+    is returned; insufficient or mismatched lookups return {}."""
     extracted_info = extract_info_from_query(user_query)
-    results = {}
-    
-    for order_id in extracted_info['order_ids']:
-        order_data = get_order_by_id(order_id)
-        if order_data:
-            results[f'order_{order_id}'] = order_data
-    
-    for email in extracted_info['emails']:
-        orders = get_orders_by_email(email)
-        if orders:
-            results[f'orders_for_{email}'] = orders
-    
-    for phone in extracted_info['phones']:
-        orders = get_orders_by_phone(phone)
-        if orders:
-            results[f'orders_for_phone_{phone}'] = orders
-    
-    for name in extracted_info['names']:
-        orders = search_orders_by_name(name)
-        if orders:
-            results[f'orders_for_{name}'] = orders
-    
-    return results
+
+    if not extracted_info["order_ids"] or count_lookup_fields(user_query) < 2:
+        return {}
+
+    criteria = {"order_id": extracted_info["order_ids"][0]}
+    if extracted_info["emails"]:
+        criteria["email"] = extracted_info["emails"][0]
+    if extracted_info["phones"]:
+        criteria["phone"] = extracted_info["phones"][0]
+    if extracted_info["names"]:
+        criteria["name"] = extracted_info["names"][0]
+
+    orders = find_orders(criteria)
+    return {"matched": orders} if orders else {}
 
 def format_database_context(db_results):
     """Serialize only needed, labelled database values for the conversational model."""
