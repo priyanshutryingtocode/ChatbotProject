@@ -91,9 +91,19 @@ def get_orders_by_email(email: str) -> list[dict]:
         return []
 
 
+def normalize_phone(phone: str | None) -> str:
+    """Normalize a phone for matching against stored 10-digit numbers.
+
+    Strips separators and any leading country code by keeping only the last
+    10 digits. Assumes stored numbers are bare 10-digit values.
+    """
+    digits = re.sub(r"[-.\s+()\[\]]", "", phone or "")
+    return digits[-10:]
+
+
 def get_orders_by_phone(phone: str) -> list[dict]:
     try:
-        normalized_phone = re.sub(r"[-.\s+()\[\]]", "", phone)
+        normalized_phone = normalize_phone(phone)
         customers = _client().table("customers").select("id").eq("phone", normalized_phone).execute().data or []
         return _orders_for_customer_ids([customer["id"] for customer in customers])
     except Exception:
@@ -163,6 +173,22 @@ def find_orders(criteria: dict, require_order_id: bool = True) -> list[dict]:
     return [by_id[order_id] for order_id in sorted(common_ids)]
 
 
+def _event_sort_key(event: dict):
+    """Sort key for order events by true chronological time.
+
+    ISO 8601 strings sort correctly only when offsets are uniform, so parse to a
+    timezone-aware datetime and fall back to a plain-string comparison otherwise.
+    """
+    value = event.get("event_at") or ""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (0, parsed.timestamp())
+    except (TypeError, ValueError):
+        return (1, value)
+
+
 def format_order_for_display(order: dict | None) -> str:
     if not order:
         return "No order data available"
@@ -170,7 +196,7 @@ def format_order_for_display(order: dict | None) -> str:
     customer = order.get("customers") or {}
     shipment = (order.get("shipments") or [{}])[0]
     items = order.get("order_items") or []
-    event_history = sorted(order.get("order_events") or [], key=lambda event: event.get("event_at") or "", reverse=True)
+    event_history = sorted(order.get("order_events") or [], key=_event_sort_key, reverse=True)
 
     lines = [
         f"**Order #{format_order_number(order.get('public_order_id'))}**",

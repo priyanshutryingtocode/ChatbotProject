@@ -1,5 +1,5 @@
 import re
-from database import find_orders
+from database import find_orders, normalize_phone
 
 def extract_info_from_query(query):
 
@@ -36,9 +36,9 @@ def extract_info_from_query(query):
     for pattern in phone_patterns:
         matches = re.findall(pattern, query)
         for phone in matches:
-            clean_phone = re.sub(r'[-.\s+()\[\]]', '', phone)
-            if clean_phone.isdigit() and len(clean_phone) >= 10:
-                info['phones'].append(clean_phone[-10:])  
+            clean_phone = normalize_phone(phone)
+            if len(clean_phone) == 10 and clean_phone.isdigit():
+                info['phones'].append(clean_phone)
     
     name_patterns = [
         r'name[:\s]+([A-Za-z][A-Za-z\s]{1,30})',        # "name: John Doe"
@@ -90,7 +90,10 @@ def query_database(user_query):
     if extracted_info["names"]:
         criteria["name"] = extracted_info["names"][0]
 
-    orders = find_orders(criteria)
+    try:
+        orders = find_orders(criteria)
+    except ValueError:
+        return {}
     return {"matched": orders} if orders else {}
 
 def format_database_context(db_results, query=None, fields=None):

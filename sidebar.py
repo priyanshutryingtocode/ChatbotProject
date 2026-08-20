@@ -35,7 +35,10 @@ def _run_lookup(order_id: str, email: str, phone: str, name: str) -> list[dict]:
         criteria["phone"] = phone.strip()
     if name.strip():
         criteria["name"] = name.strip()
-    return find_orders(criteria, require_order_id=True)
+    try:
+        return find_orders(criteria, require_order_id=True)
+    except ValueError:
+        return []
 
 
 def render_sidebar() -> None:
