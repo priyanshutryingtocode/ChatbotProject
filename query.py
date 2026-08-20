@@ -6,6 +6,8 @@ def extract_info_from_query(query):
     info = {'order_ids': [], 'emails': [], 'phones': [], 'names': []}
     
     order_patterns = [
+        r'\b(?:order\s*(?:number|id)?|number|no\.?)\s*(?:is|:)?\s*[:#]?\s*(\d{1,4})\b',  # "order number is 4", "number 4", "no 4", "order: 4"
+        r"\b(?:it'?s|it is)\s+(\d{1,4})\b",  # "its 4", "it's 4", "it is 4"
         r'order[:\s#]+(\d+)',           # "order 123", "order: 123", "order #123"
         r'order\s*id[:\s#]*(\d+)',      # "order id 123", "order id: 123"
         r'#(\d+)',                      # "#123"

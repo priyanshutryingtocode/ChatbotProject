@@ -78,8 +78,9 @@ python seed_orders.py --customers 100 --orders-per-customer 3
 ```
 
 This creates 300 records in `data/fake_orders.json`, using reproducible order
-IDs beginning at `900000`. Confirm this range does not overlap your existing
-orders, then insert them into Supabase:
+IDs within the supported range of 1 to 1000 (defaults to starting at 1; use
+`--start-order-id` to change it). Confirm this range does not overlap your
+existing orders, then insert them into Supabase:
 
 ```bash
 python seed_orders.py --customers 100 --orders-per-customer 3 --insert
@@ -93,8 +94,8 @@ project—not in a production database with real customers.
 
 ## Features
 
-- **Natural Language Queries**: Ask questions like "Check order 12345 with email john@email.com"
-- **Two-Field Verification**: Every lookup requires an order number plus one more identity field (email, phone, or customer name). The provided fields must match the same order before any data is returned, so a single known field can never expose a customer's order details.
+- **Natural Language Queries**: Ask questions like "Check order 42 with email john@email.com"
+- **Two-Field Verification**: Every lookup requires an order number plus one more identity field (email, phone, or customer name). The provided fields must match the same order before any data is returned, so a single known field can never expose a customer's order details. In the chat, the two fields can be provided across messages (e.g. `order 42`, then `my email is john@email.com`).
 - **Multiple Search Methods**: Order ID must be combined with an email, phone, or customer name
 - **LangChain Integration**: Uses LangChain for prompt management and LLM interaction
 - **Quick Lookup Sidebar**: Direct database searches using the same two-field requirement
@@ -134,12 +135,12 @@ project—not in a production database with real customers.
 
 ## Usage Examples
 
-**Chat Interface** (order number + one more detail in the same message):
-- "Check my order 12345, email john@email.com"
-- "Status of order #67890, phone 1234567890"
-- "Show order 12345 for John Smith"
+**Chat Interface** (order number + one more detail, either in the same message or across messages):
+- "Check my order 42, email john@email.com"
+- "Order 42" then "my email is john@email.com"
+- "Status of order #43, phone 1234567890"
 
-If you supply only one field, the assistant asks for a second detail before sharing anything.
+The assistant asks for any missing detail before sharing anything. Order numbers are supported in the range 0001–1000.
 
 **Sidebar Quick Lookup:**
 - Enter an order number (required)

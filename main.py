@@ -70,7 +70,7 @@ def handle_user_input(user_input: str) -> None:
 
 def render_chat_interface() -> None:
     if not st.session_state.messages:
-        st.info("For order details I need two details: your order number plus your email, phone number, or name. Example: `Where is order 900000, email a@b.com`?")
+        st.info("I need two details to verify an order: your order number plus your email, phone number, or name. Example: `check order 42, email you@example.com`")
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
