@@ -188,6 +188,8 @@ def format_order_for_display(order: dict | None) -> str:
         lines.append("Items: " + ", ".join(f"{item['quantity']}× {item['product_name']}" for item in items))
     if shipment.get("tracking_number"):
         lines.append(f"Tracking: {shipment['tracking_number']} ({shipment.get('carrier', 'N/A')})")
+    if shipment.get("delivery_driver_name"):
+        lines.append(f"Driver: {shipment['delivery_driver_name']}")
     if shipment.get("estimated_delivery_at"):
         lines.append(f"Estimated Delivery: {format_timestamp(shipment['estimated_delivery_at'])}")
     if shipment.get("delivered_at"):
@@ -196,3 +198,74 @@ def format_order_for_display(order: dict | None) -> str:
         latest = event_history[0]
         lines.append(f"Latest Update: {latest.get('event_type', 'N/A')} — {format_timestamp(latest.get('event_at'))}")
     return "  \n".join(lines)
+
+
+def create_conversation(channel: str = "streamlit", customer_email: str | None = None) -> str:
+    """Create a conversation record and return its id. Best-effort, never raises."""
+    try:
+        row = {"channel": channel}
+        if customer_email:
+            row["customer_email"] = customer_email
+        response = _client().table("conversations").insert(row).execute()
+        return (response.data or [{}])[0].get("id", "")
+    except Exception:
+        logger.exception("Failed to create conversation")
+        return ""
+
+
+def append_message(
+    conversation_id: str, role: str, content: str, db_results: dict | None = None
+) -> str:
+    """Store one chat message. Returns the new message id ("" if it failed)."""
+    if not conversation_id:
+        return ""
+    try:
+        row = {"conversation_id": conversation_id, "role": role, "content": content}
+        if db_results:
+            row["db_results"] = db_results
+        response = _client().table("messages").insert(row).execute()
+        return (response.data or [{}])[0].get("id", "")
+    except Exception:
+        logger.exception("Failed to append message")
+        return ""
+
+
+def get_messages(conversation_id: str, limit: int = 50) -> list[dict]:
+    """Return stored messages for a conversation, oldest first."""
+    if not conversation_id:
+        return []
+    try:
+        response = (
+            _client().table("messages")
+            .select("id, role, content, db_results, created_at")
+            .eq("conversation_id", conversation_id)
+            .order("created_at", desc=False)
+            .limit(limit)
+            .execute()
+        )
+        return response.data or []
+    except Exception:
+        logger.exception("Failed to load messages")
+        return []
+
+
+def end_conversation(conversation_id: str) -> None:
+    """Mark a conversation as ended. Best-effort, never raises."""
+    if not conversation_id:
+        return
+    try:
+        _client().table("conversations").update({"ended_at": datetime.now(timezone.utc).isoformat()}).eq(
+            "id", conversation_id
+        ).execute()
+    except Exception:
+        logger.exception("Failed to end conversation")
+
+
+def record_feedback(message_id: str, feedback: str) -> None:
+    """Record up/down feedback for an assistant message. Best-effort, never raises."""
+    if not message_id or feedback not in ("up", "down"):
+        return
+    try:
+        _client().table("messages").update({"feedback": feedback}).eq("id", message_id).execute()
+    except Exception:
+        logger.exception("Failed to record feedback")

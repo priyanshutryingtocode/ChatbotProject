@@ -1,7 +1,7 @@
 import streamlit as st
 
 from chat_handler import OrderChatHandler
-from database import format_order_for_display, format_order_number, format_timestamp
+from database import format_order_for_display, format_order_number, format_timestamp, record_feedback
 from sidebar import render_sidebar
 
 
@@ -35,9 +35,11 @@ def initialize_session_state() -> None:
 
 
 def start_new_chat() -> None:
+    st.session_state.chat_handler.end_session()
     st.session_state.messages = []
     st.session_state.last_db_results = {}
     st.session_state.chat_handler.clear_context()
+    st.session_state.pop("feedback_given", None)
 
 
 def render_header() -> None:
@@ -56,6 +58,7 @@ def render_header() -> None:
 
 def handle_user_input(user_input: str) -> None:
     st.session_state.messages.append({"role": "user", "content": user_input})
+    st.session_state.pop("feedback_given", None)
     try:
         with st.spinner("Checking order details..."):
             ai_response, db_results = st.session_state.chat_handler.process_user_message(user_input)
@@ -68,13 +71,35 @@ def handle_user_input(user_input: str) -> None:
         )
 
 
+def render_feedback_buttons(message_index: int) -> None:
+    if st.session_state.get("feedback_given"):
+        st.caption("Thanks for your feedback!")
+        return
+
+    left, right = st.columns([1, 1])
+    with left:
+        if st.button("👍 Helpful", key=f"fb_up_{message_index}"):
+            message_id = st.session_state.chat_handler.last_message_ids.get("assistant", "")
+            record_feedback(message_id, "up")
+            st.session_state.feedback_given = True
+            st.rerun()
+    with right:
+        if st.button("👎 Not helpful", key=f"fb_down_{message_index}"):
+            message_id = st.session_state.chat_handler.last_message_ids.get("assistant", "")
+            record_feedback(message_id, "down")
+            st.session_state.feedback_given = True
+            st.rerun()
+
+
 def render_chat_interface() -> None:
     if not st.session_state.messages:
         st.info("I need two details to verify an order: your order number plus your email, phone number, or name. Example: `check order 42, email you@example.com`")
 
-    for message in st.session_state.messages:
+    for index, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message["role"] == "assistant" and index == len(st.session_state.messages) - 1:
+                render_feedback_buttons(index)
 
     prompt = st.chat_input("Ask about an order, customer, delivery, or payment status…")
     if prompt:
