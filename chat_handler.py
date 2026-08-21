@@ -17,7 +17,7 @@ from database import (
 )
 from query import count_lookup_fields, extract_info_from_query, format_database_context, has_lookup_identifier
 from setup import SYSTEM_PROMPT, chatmodel
-from tools import build_llm_with_tools, lookup_order
+from tools import build_llm_with_tools, lookup_order, search_policy
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,21 @@ STATUS_EXPLANATIONS = {
 
 FOLLOW_UP_WORDS = ("track", "tracking", "status", "where is", "where's", "when", "arrive", "delivery", "deliver", "payment", "paid", "refund")
 
+# Keywords marking a public-policy / FAQ question. Policy answers come from
+# retrieved documents and never require identity verification.
+POLICY_WORDS = (
+    "policy", "policies", "return", "returns", "refund", "refunded",
+    "exchange", "warranty", "damaged", "damage", "cancellation",
+    "shipping cost", "delivery charge", "delivery slot", "time slot",
+)
+
+# Phrase-level policy intents that keyword matching alone would miss.
+POLICY_PHRASES = (
+    re.compile(r"\bhow\s+(?:do|can)\s+i\s+cancel\b"),
+    re.compile(r"\bcancel(?:\s+my|\s+the)?\s+order\b"),
+    re.compile(r"\breturn\s+(?:my|the|an)?\s*(?:order|item)\b"),
+)
+
 # Words that are clearly conversational filler rather than a bare name.
 BARE_NAME_STOPWORDS = {
     "hello", "hi", "hey", "thanks", "thank", "thank you", "yes", "yep", "yeah",
@@ -43,8 +58,17 @@ BARE_NAME_STOPWORDS = {
 BARE_NAME_QUESTION_WORDS = {
     "where", "what", "when", "how", "why", "who", "which", "can", "could",
     "would", "will", "shall", "is", "are", "do", "does", "did", "please",
-    "wait", "hold", "let", "i", "my", "we", "you", "it", "there",
+    "wait", "hold", "let", "i", "my", "we", "you", "it", "there", "cancel",
 }
+
+# A bare abort of the current flow ("cancel", "cancel that") — distinct from a
+# cancellation *request* about an order ("cancel my order"), which is policy.
+_BARE_CANCEL_RE = re.compile(r"^(?:ok[,\s]*)?(?:please\s+)?cancel(?:\s+(?:it|that|this))?\s*(?:please)?$")
+
+
+def _looks_like_bare_cancel(message_lower: str) -> bool:
+    candidate = message_lower.strip()
+    return bool(_BARE_CANCEL_RE.fullmatch(candidate))
 
 
 def _looks_like_bare_name(text: str) -> bool:
@@ -137,14 +161,20 @@ class OrderChatHandler:
         if verified_ids and message_order_ids and message_order_ids <= verified_ids and count_lookup_fields(user_input) < 2:
             return self._continue_with_context(user_input), {}
 
-        # Let the user bail out of a half-finished verification.
-        if self.pending_identity and re.search(
-            r"\b(?:cancel|never\s*mind|forget\s*(?:it|that)|skip|nothing)\b", user_input.lower()
-        ):
-            self.pending_identity = {}
-            response = "No problem — we can start over whenever you're ready. To check an order I'll need your order number plus your email, phone number, or name."
-            self.conversation_history.append(("assistant", response))
-            return response, {}
+        # Let the user bail out of a half-finished verification. An explicit
+        # policy question instead interrupts collection to answer, keeping the
+        # collected identity so verification can resume afterwards.
+        if self.pending_identity:
+            lowered = user_input.lower()
+            if _looks_like_bare_cancel(lowered) or re.search(
+                r"\b(?:never\s*mind|forget\s*(?:it|that)|skip|nothing)\b", lowered
+            ):
+                self.pending_identity = {}
+                response = "No problem — we can start over whenever you're ready. To check an order I'll need your order number plus your email, phone number, or name."
+                self.conversation_history.append(("assistant", response))
+                return response, {}
+            if self._is_policy_question(user_input):
+                return self._run_tool_lookup(user_input)
 
         self._merge_pending_identity(extracted)
         has_order = self.pending_identity.get("order_id") is not None
@@ -166,9 +196,12 @@ class OrderChatHandler:
             self.conversation_history.append(("assistant", response))
             return response, {}
 
-        # An order inquiry that the rules could not classify: let the tool
-        # loop resolve it (the tool enforces verification server-side).
-        if not self.last_db_results and self._is_order_inquiry(user_input):
+        # An order inquiry or policy question the rules could not classify:
+        # let the tool loop resolve it (lookup_order enforces verification
+        # server-side; search_policy retrieves public policy documents).
+        if not self.last_db_results and (
+            self._is_order_inquiry(user_input) or self._is_policy_question(user_input)
+        ):
             return self._run_tool_lookup(user_input)
 
         return self._continue_with_context(user_input), {}
@@ -245,27 +278,17 @@ class OrderChatHandler:
             db_results = {}
             for call in tool_calls:
                 tool_call_id = call.get("id")
-                if call.get("name") != "lookup_order":
+                name = call.get("name")
+                args = call.get("args") or {}
+
+                if name == "lookup_order":
+                    payload = self._execute_order_lookup(args)
+                elif name == "search_policy":
+                    payload = self._execute_policy_search(args)
+                else:
+                    payload = None
                     messages.append(ToolMessage(content="Unknown tool.", tool_call_id=tool_call_id))
                     continue
-                args = call.get("args") or {}
-                try:
-                    payload = json.loads(lookup_order.invoke(args))
-                except Exception:
-                    logger.exception("Tool execution failed")
-                    payload = {"status": "error"}
-
-                if payload.get("status") == "found":
-                    criteria = self._criteria_from_args(args)
-                    orders = find_orders(criteria, require_order_id=True) if len(criteria) >= 2 else []
-                    db_results = {"matched": orders} if orders else {}
-                    if db_results:
-                        self.last_db_results = db_results
-                        self.pending_identity = {}
-                elif payload.get("status") == "need_more_info":
-                    self.pending_identity = self._criteria_from_args(args)
-                else:
-                    self.pending_identity = {}
 
                 messages.append(ToolMessage(content=json.dumps(payload), tool_call_id=tool_call_id))
 
@@ -280,6 +303,37 @@ class OrderChatHandler:
             response = self._two_field_prompt()
             self.conversation_history.append(("assistant", response))
             return response, {}
+
+    def _execute_order_lookup(self, args: dict) -> dict:
+        """Run lookup_order and mirror its result into handler state."""
+        try:
+            payload = json.loads(lookup_order.invoke(args))
+        except Exception:
+            logger.exception("Order tool execution failed")
+            payload = {"status": "error"}
+
+        if payload.get("status") == "found":
+            criteria = self._criteria_from_args(args)
+            orders = find_orders(criteria, require_order_id=True) if len(criteria) >= 2 else []
+            db_results = {"matched": orders} if orders else {}
+            if db_results:
+                self.last_db_results = db_results
+                self.pending_identity = {}
+        elif payload.get("status") == "need_more_info":
+            self.pending_identity = self._criteria_from_args(args)
+        else:  # not_found / error
+            self.pending_identity = {}
+        return payload
+
+    @staticmethod
+    def _execute_policy_search(args: dict) -> dict:
+        """Run search_policy. Touches no order state."""
+        try:
+            payload = json.loads(search_policy.invoke(args))
+        except Exception:
+            logger.exception("Policy tool execution failed")
+            payload = {"status": "error"}
+        return payload
 
     def _ask_for_missing_field(self) -> str:
         """Explain which identity field is still needed to complete a lookup."""
@@ -298,6 +352,12 @@ class OrderChatHandler:
     def _is_order_inquiry(self, user_input: str) -> bool:
         message = user_input.lower()
         return bool(has_lookup_identifier(user_input) or any(word in message for word in FOLLOW_UP_WORDS))
+
+    def _is_policy_question(self, user_input: str) -> bool:
+        message = user_input.lower()
+        if any(word in message for word in POLICY_WORDS):
+            return True
+        return any(pattern.search(message) for pattern in POLICY_PHRASES)
 
     def _two_field_prompt(self) -> str:
         return (
