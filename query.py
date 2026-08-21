@@ -1,18 +1,23 @@
 import re
-from database import find_orders, normalize_phone
+from database import normalize_phone
 
 def extract_info_from_query(query):
 
     info = {'order_ids': [], 'emails': [], 'phones': [], 'names': []}
     
     order_patterns = [
-        r'\b(?:order\s*(?:number|id)?|number|no\.?)\s*(?:is|:)?\s*[:#]?\s*(\d{1,4})\b',  # "order number is 4", "number 4", "no 4", "order: 4"
-        r"\b(?:it'?s|it is)\s+(\d{1,4})\b",  # "its 4", "it's 4", "it is 4"
-        r'order[:\s#]+(\d+)',           # "order 123", "order: 123", "order #123"
-        r'order\s*id[:\s#]*(\d+)',      # "order id 123", "order id: 123"
-        r'#(\d+)',                      # "#123"
-        r'order\s*number[:\s#]*(\d+)',  # "order number 123"
-        r'\b(\d{4,})\b'                 # Any 4+ digit number (standalone)
+        # Broad opener: "order 42", "order number 42", "order id 42", "order: 42",
+        # "order #42", "order42", plus bare "number 4", "no 4", "no. 4".
+        # (\d{1,4} is range-bounded; anything above 1000 is filtered below.)
+        r'\b(?:order\s*(?:number|id)?|number|no\.?)\s*(?:is|:)?\s*[:#]?\s*(\d{1,4})\b',
+        # "it's 4", "it is 4", "its 4"
+        r"\b(?:it'?s|it is)\s+(\d{1,4})\b",
+        # "order 42", "order#42", "order :42", "order #:42" (multi-separator forms)
+        r'order[:\s#]+(\d+)',
+        # "#42"
+        r'#(\d+)',
+        # Any standalone 4+ digit number (range-filtered below to 1..1000)
+        r'\b(\d{4,})\b',
     ]
     
     for pattern in order_patterns:
@@ -72,29 +77,6 @@ def has_lookup_identifier(query: str) -> bool:
     # grounded “not found” response rather than a free-form model answer.
     return bool(re.search(r"(?:\border\s*(?:id|number)?\s*[:#]?\s*|#)\d+", query, re.IGNORECASE))
 
-
-def query_database(user_query):
-    """Look up orders only when an order number and one more identity field are
-    provided. Every supplied field must match the same order before anything
-    is returned; insufficient or mismatched lookups return {}."""
-    extracted_info = extract_info_from_query(user_query)
-
-    if not extracted_info["order_ids"] or count_lookup_fields(user_query) < 2:
-        return {}
-
-    criteria = {"order_id": extracted_info["order_ids"][0]}
-    if extracted_info["emails"]:
-        criteria["email"] = extracted_info["emails"][0]
-    if extracted_info["phones"]:
-        criteria["phone"] = extracted_info["phones"][0]
-    if extracted_info["names"]:
-        criteria["name"] = extracted_info["names"][0]
-
-    try:
-        orders = find_orders(criteria)
-    except ValueError:
-        return {}
-    return {"matched": orders} if orders else {}
 
 def format_database_context(db_results, query=None, fields=None):
     """Serialize only the relevant, labelled database values for the model.

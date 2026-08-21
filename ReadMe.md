@@ -6,14 +6,20 @@ A LangChain-powered Streamlit application for checking order status using natura
 
 ```
 ├── main.py                # Main Streamlit application
-├── setup.py               # Environment setup
-├── database.py            # Database operations and queries
-├── query.py               # Query handling and text processing
-├── chat_handler.py        # Chat logic and LLM integration
-├── sidebar.py             # Sidebar UI components
+├── setup.py               # Env loading, LLM init, system prompt
+├── database.py            # Supabase queries, two-field verification, formatting
+├── query.py               # Text parsing / info extraction + context formatting
+├── chat_handler.py        # Chat logic and LLM/tool integration
+├── tools.py               # LangChain tool definition (lookup_order)
+├── sidebar.py             # Sidebar quick-lookup UI
+├── seed_orders.py         # Faker-based synthetic data generator
 ├── requirements.txt       # Python dependencies
-├── .env                   # Environment variables (create this)
-└── README.md              # This file
+├── .env                   # Environment variables (create this — see below)
+├── supabase/              # Local Supabase migrations (gitignored)
+│   └── migrations/        #   002_conversations.sql — conversation logging tables
+└── data/                  # Generated seed data (gitignored)
+    ├── normalized_fake_orders.json
+    └── normalized_seed_smoke_test.json
 ```
 
 ## Setup Instructions
@@ -28,39 +34,31 @@ A LangChain-powered Streamlit application for checking order status using natura
    ```
    GEMINI_API_KEY=your_api_key
    SUPABASE_URL=your_supabase_url
-   SUPABASE_KEY=your_supabase_key
    SUPABASE_SERVICE_ROLE_KEY=server_only_service_role_key
    ```
+   `SUPABASE_SERVICE_ROLE_KEY` is required only by the server-side app and the
+   seeder; never expose it in a browser client.
 
 3. **Database Schema**
-   Apply `supabase/migrations/20260819_normalized_order_schema.sql`. The app
-   uses the normalized `customers`, `orders`, `order_items`, `shipments`, and
-   `order_events` tables. `SUPABASE_SERVICE_ROLE_KEY` is required only by the
-   server-side support app and the seeder; never expose it in a browser client.
+   Point the app at a Supabase project that contains the normalized schema.
+   The service-role key bypasses RLS, so the `orders`, `customers`, and related
+   tables are readable by the server process. The relevant tables are:
 
-   The legacy `Order_Status` table schema was:
-   - order_id (integer)
-   - order_status (text)
-   - customer_name (text)
-   - customer_email (text)
-   - customer_phone (text)
-   - customer_address (text)
-   - city (text)
-   - state (text)
-   - postal_code (text)
-   - order_date (date)
-   - delivery_date (date)
-   - delivery_time_slot (text)
-   - items_ordered (text)
-   - item_quantity (integer)
-   - total_amount (decimal)
-   - payment_status (text)
-   - delivery_driver (text)
-   - driver_phone (text)
-   - special_instructions (text)
-   - priority (text)
-   - estimated_delivery_time (timestamp)
-   - actual_delivery_time (timestamp)
+   | Table | Purpose |
+   |---|---|
+   | `customers` | `id`, `full_name`, `email` (unique), `phone` (unique) |
+   | `customer_addresses` | customer address book (`customer_id` → `customers.id`) |
+   | `orders` | `public_order_id` (PK), `customer_id`, `status`, `priority`, `payment_status`, `currency`, subtotals, `ordered_at`, `cancelled_at`, `special_instructions`, `total_amount` |
+   | `order_delivery_addresses` | per-order shipping address (`order_id` → `orders.public_order_id`) |
+   | `order_items` | line items (`order_id`, `product_sku`, `product_name`, `quantity`, `unit_price`, `line_total`) |
+   | `shipments` | `carrier`, `tracking_number` (unique), `delivery_driver_name`, `estimated_delivery_at`, `delivered_at`, `delivery_time_slot` |
+   | `order_events` | event timeline (`event_type`, `event_at`, `message`) |
+   | `payments` | `provider`, `provider_payment_id` (unique), `amount`, `currency`, `status` |
+   | `conversations` | chat session log (`id` uuid, `channel`, `customer_email`, `ended_at`) |
+   | `messages` | `conversation_id`, `role`, `content`, `db_results` (jsonb), `feedback` |
+
+   Order numbers are public IDs in the range `0001`–`1000`. The seeder relies on
+   helper RPCs that keep the auto-id sequences in sync with inserted rows.
 
 4. **Run Application**
    ```bash
@@ -77,8 +75,8 @@ any database change:
 python seed_orders.py --customers 100 --orders-per-customer 3
 ```
 
-This creates 300 records in `data/fake_orders.json`, using reproducible order
-IDs within the supported range of 1 to 1000 (defaults to starting at 1; use
+This creates 300 records in `data/normalized_fake_orders.json`, using reproducible
+order IDs within the supported range of 1 to 1000 (defaults to starting at 1; use
 `--start-order-id` to change it). Confirm this range does not overlap your
 existing orders, then insert them into Supabase:
 
@@ -86,11 +84,11 @@ existing orders, then insert them into Supabase:
 python seed_orders.py --customers 100 --orders-per-customer 3 --insert
 ```
 
-The normalized-schema seeder requires `SUPABASE_URL` and a separate
-`SUPABASE_SERVICE_ROLE_KEY` only when `--insert` is specified. This privileged
-key bypasses RLS, so use it only for local/admin seeding and never expose it to
-the Streamlit client. Use this data only in development or a dedicated demo
-project—not in a production database with real customers.
+The seeder requires `SUPABASE_URL` and a separate `SUPABASE_SERVICE_ROLE_KEY`
+only when `--insert` is specified. This privileged key bypasses RLS, so use it
+only for local/admin seeding and never expose it to the Streamlit client. Use
+this data only in development or a dedicated demo project—not in a production
+database with real customers.
 
 ## Features
 
@@ -109,19 +107,22 @@ project—not in a production database with real customers.
 - System prompt configuration
 
 ### `database.py`
-- Direct database query functions
+- Direct database query functions (order ID, email, phone, name)
+- Two-field verification logic (`find_orders`)
 - Order formatting utilities
-- Error handling for database operations
+- Conversation/message persistence and feedback recording
 
 ### `query.py`
 - Text parsing and information extraction
-- Database query orchestration
-- Context formatting for LLM
+- Context formatting for the LLM (field selection by intent)
 
 ### `chat_handler.py`
 - LangChain chat logic
-- Message processing
-- Response generation
+- Multi-turn identity collection across messages
+- Response generation (deterministic for order facts + LLM fallback)
+
+### `tools.py`
+- LangChain function-calling tool (`lookup_order`) that enforces verification server-side
 
 ### `sidebar.py`
 - Streamlit sidebar components
@@ -133,11 +134,14 @@ project—not in a production database with real customers.
 - Session state management
 - UI layout and coordination
 
+### `seed_orders.py`
+- Faker-based synthetic data generator (JSON output, optional `--insert`)
+
 ## Usage Examples
 
 **Chat Interface** (order number + one more detail, either in the same message or across messages):
-- "Check my order 42, email john@email.com"
-- "Order 42" then "my email is john@email.com"
+- "Check my order 42, email you@example.com"
+- "Order 42" then "my email is you@example.com"
 - "Status of order #43, phone 1234567890"
 
 The assistant asks for any missing detail before sharing anything. Order numbers are supported in the range 0001–1000.

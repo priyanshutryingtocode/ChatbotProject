@@ -4,7 +4,7 @@ import re
 
 import streamlit as st
 
-from database import find_orders
+from database import find_orders, normalize_phone
 
 
 def _validate_fields(order_id: str, email: str, phone: str, name: str) -> str | None:
@@ -20,7 +20,7 @@ def _validate_fields(order_id: str, email: str, phone: str, name: str) -> str | 
         return "Add at least one more detail: email, phone number, or customer name."
     if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return "Enter a valid email address."
-    if phone and len(re.sub(r"\D", "", phone)) < 10:
+    if phone and len(normalize_phone(phone)) < 10:
         return "Enter at least 10 phone digits."
     if name and len(name) < 2:
         return "Enter at least two characters of the customer's name."
