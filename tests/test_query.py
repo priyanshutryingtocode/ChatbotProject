@@ -58,6 +58,20 @@ class TestExtractName:
         info = query.extract_info_from_query("my name is Jane 42")
         assert not any(any(c.isdigit() for c in name) for name in info["names"])
 
+    def test_prose_after_name_is_not_swallowed(self):
+        # Regression: the loose "name <space>" pattern used to capture
+        # "on it should be gaurang" wholesale, failing a legitimate lookup.
+        info = query.extract_info_from_query("name on it should be gaurang")
+        assert info["names"] == ["gaurang"]
+
+    def test_customer_is_phrase(self):
+        info = query.extract_info_from_query("customer is Priya Sharma")
+        assert "Priya Sharma" in info["names"]
+
+    def test_overlapping_name_patterns_dedupe(self):
+        info = query.extract_info_from_query("name is Jane Doe")
+        assert info["names"].count("Jane Doe") == 1
+
 
 class TestCountAndHasLookupFields:
     def test_count_lookup_fields_two(self):

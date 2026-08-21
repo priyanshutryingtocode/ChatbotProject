@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import json
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 import chat_handler
 import tools as tools_namespace
@@ -244,3 +244,85 @@ class TestPolicyQuestions:
         tool_contents = [json.loads(m.content) for m in second_messages if isinstance(m, ToolMessage)]
         statuses = {payload.get("status") for payload in tool_contents}
         assert statuses == {"found", "not_found"}
+
+
+class TestStreamingResponse:
+    def test_streamed_generator_yields_deltas_and_persists_once(self, monkeypatch):
+        handler = OrderChatHandler()
+        monkeypatch.setattr(
+            handler, "_route_message",
+            lambda ui, stream=False, on_step=None: (iter(["Hel", "lo"]), {}),
+        )
+
+        deltas = list(handler.stream_response("hi there"))
+
+        assert deltas == ["Hel", "lo"]
+        # Orchestrator records only the human turn; the assistant-history
+        # entry belongs to real routing leaves (asserted in the deterministic
+        # and tool-loop tests below) — a bare stub has none.
+        assert handler.conversation_history[-1] == ("human", "hi there")
+        assert handler.last_message_ids.get("assistant") == "msg-1"
+
+    def test_string_route_result_streams_as_fast_typewriter(self, monkeypatch):
+        handler = OrderChatHandler()
+
+        def route(ui, stream=False, on_step=None):
+            assert stream is True  # streaming mode must reach the router
+            return "Not found, sorry.", {}
+
+        monkeypatch.setattr(handler, "_route_message", route)
+        deltas = list(handler.stream_response("order 42, email x@y.com"))
+        assert "".join(deltas) == "Not found, sorry."
+        assert handler.last_message_ids.get("assistant") == "msg-1"
+
+    def test_empty_input_streams_greeting(self):
+        handler = OrderChatHandler()
+        deltas = list(handler.stream_response(""))
+        assert len(deltas) == 1
+        assert "two details" in deltas[0].lower()
+
+    def test_exception_degrades_to_fallback_delta(self, monkeypatch):
+        handler = OrderChatHandler()
+
+        def boom(ui, stream=False, on_step=None):
+            raise RuntimeError("routing exploded")
+
+        monkeypatch.setattr(handler, "_route_message", boom)
+        deltas = list(handler.stream_response("hello"))
+        joined = "".join(deltas)
+        assert "error" in joined.lower()
+        assert handler.last_message_ids.get("assistant") == "msg-1"
+
+    def test_deterministic_follow_up_streams_single_instant_chunk(self, monkeypatch, sample_order):
+        monkeypatch.setattr(chat_handler, "find_orders", lambda criteria, require_order_id=True: [sample_order])
+        handler = OrderChatHandler()
+        handler.process_user_message("order 42, email jane@example.com")
+
+        deltas = list(handler.stream_response("who is the driver?"))
+
+        assert deltas == ["The delivery driver for order #0042 is **Bob**."]
+        # Real leaf: the assistant turn lands in history at the right moment.
+        assert handler.conversation_history[-1] == ("assistant", deltas[0])
+        handler.llm.invoke.assert_not_called()
+
+    def test_tool_loop_final_answer_streams(self, monkeypatch, sample_order):
+        first = AIMessage(content="", tool_calls=[{"name": "search_policy", "args": {"question": "returns"}, "id": "t9"}])
+        scripted = MagicMock()
+        scripted.invoke.return_value = first
+        scripted.stream.return_value = iter([AIMessageChunk(content="Per our "), AIMessageChunk(content="Returns policy.")])
+        monkeypatch.setattr(chat_handler, "build_llm_with_tools", lambda: scripted)
+
+        policy_stub = MagicMock()
+        policy_stub.invoke.return_value = json.dumps({"status": "found", "context": "[source: Returns]"})
+        monkeypatch.setattr(chat_handler, "search_policy", policy_stub)
+
+        handler = OrderChatHandler()
+        deltas = list(handler.stream_response("what is your return policy?"))
+
+        assert deltas == ["Per our ", "Returns policy."]
+        # Real leaf: assembled text appended to history at generator exhaustion.
+        assert handler.conversation_history[-1] == ("assistant", "".join(deltas))
+        # The streamed final call received the search_policy ToolMessage payload.
+        streamed_messages = scripted.stream.call_args.args[0]
+        tool_messages = [m for m in streamed_messages if isinstance(m, ToolMessage)]
+        assert any(json.loads(m.content).get("status") == "found" for m in tool_messages)
