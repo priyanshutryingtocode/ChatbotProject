@@ -117,7 +117,7 @@ ingestion and per-question embedding are cheap relative to chat calls.
 - **LangChain Integration**: Uses LangChain for prompt management and LLM interaction
 - **Quick Lookup Sidebar**: Direct database searches using the same two-field requirement
 - **Session Management**: Maintains conversation context and database results; recent chats are listed in the sidebar and can be resumed across refreshes
-- **Streaming replies**: Assistant responses render progressively instead of appearing at once
+- **Live streaming**: Assistant answers stream token-by-token as generated (with lightweight step hints like "Searching policies…"), so first words appear in about a second instead of after the full response
 
 ## File Descriptions
 
@@ -204,7 +204,7 @@ your daily Gemini quota — run deliberately):
 6. `what's your return policy?` → cited answer from retrieved docs, no verification demanded
 7. `cancel my order` mid-verification → cited cancellation policy; collected identity preserved
 
-Future work: CI workflow, behavioral eval suite, seeder unit tests, true token streaming.
+Future work: CI workflow, behavioral eval suite.
 
 ## Customization
 

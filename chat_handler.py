@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 
 from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -31,6 +32,21 @@ STATUS_EXPLANATIONS = {
 }
 
 FOLLOW_UP_WORDS = ("track", "tracking", "status", "where is", "where's", "when", "arrive", "delivery", "deliver", "payment", "paid", "refund")
+
+FALLBACK_MESSAGE = "I'm sorry, there was an error processing your request. Please try again or contact support."
+
+
+def typewriter(text: str, word_delay: float = 0.006, max_animated_words: int = 60):
+    """Fast typing variant: a brief effect for short deterministic replies;
+    anything longer renders instantly."""
+    words = text.split(" ")
+    if len(words) > max_animated_words:
+        yield text
+        return
+    for index, word in enumerate(words):
+        yield word + (" " if index < len(words) - 1 else "")
+        if index < len(words) - 1:
+            time.sleep(word_delay)
 
 # Keywords marking a public-policy / FAQ question. Policy answers come from
 # retrieved documents and never require identity verification.
@@ -118,20 +134,75 @@ class OrderChatHandler:
             self._persist_message("assistant", greeting)
             return greeting, {}
 
-        self._persist_message("user", user_input)
         try:
             self.conversation_history.append(("human", user_input))
             response, db_results = self._route_message(user_input)
         except Exception:
             logger.exception("Error processing user message")
-            response = "I'm sorry, there was an error processing your request. Please try again or contact support."
+            response = FALLBACK_MESSAGE
             db_results = {}
             self.conversation_history.append(("assistant", response))
 
+        # Persist both turns only after the response exists: one round-trip is
+        # cut from the critical path ahead of the model, and DB ordering
+        # (user then assistant) is preserved.
+        self._persist_message("user", user_input)
         self._persist_message("assistant", response, db_results)
         return response, db_results
 
-    def _route_message(self, user_input):
+    def stream_response(self, user_input, on_step=None):
+        """Yield response deltas for the UI, persisting both turns at the end.
+
+        Shares routing with process_user_message: deterministic branches yield
+        their complete text instantly (short ones through the fast typewriter),
+        while model-backed leaves stream real tokens. Never raises — failures
+        degrade to the standard apology so the chat never stalls.
+        """
+        if not user_input or not user_input.strip():
+            greeting = (
+                "Hello! I'm here to help you check your order status. To look up an order "
+                "I need two details: your order number plus your email, phone number, or name."
+            )
+            self.conversation_history.append(("assistant", greeting))
+            self._persist_message("user", user_input or "")
+            self._persist_message("assistant", greeting)
+            yield greeting
+            return
+
+        if on_step:
+            on_step("Checking your request…")
+
+        response = None
+        db_results = {}
+        try:
+            self.conversation_history.append(("human", user_input))
+            result, db_results = self._route_message(user_input, stream=True, on_step=on_step)
+
+            if isinstance(result, str):
+                response = result
+                yield from typewriter(result)
+            else:
+                pieces = []
+                for piece in result:
+                    if piece:
+                        pieces.append(piece)
+                        yield piece
+                response = "".join(pieces)
+        except Exception:
+            logger.exception("Error streaming response")
+            response = FALLBACK_MESSAGE
+            yield response
+
+        self._persist_message("user", user_input)
+        self._persist_message("assistant", response, db_results if isinstance(db_results, dict) else {})
+
+    def _route_message(self, user_input, stream=False, on_step=None):
+        """Classify a turn and produce its reply.
+
+        Assistant-turn bookkeeping belongs to the leaves: streaming generators
+        append their assembled text to conversation_history at exhaustion, and
+        deterministic branches append before returning.
+        """
         extracted = extract_info_from_query(user_input)
 
         # While awaiting an order number, a bare standalone number is the order.
@@ -159,7 +230,7 @@ class OrderChatHandler:
         verified_ids = self._verified_order_ids()
         message_order_ids = {int(order_id) for order_id in extracted["order_ids"]}
         if verified_ids and message_order_ids and message_order_ids <= verified_ids and count_lookup_fields(user_input) < 2:
-            return self._continue_with_context(user_input), {}
+            return self._continue_with_context(user_input, stream=stream), {}
 
         # Let the user bail out of a half-finished verification. An explicit
         # policy question instead interrupts collection to answer, keeping the
@@ -174,7 +245,7 @@ class OrderChatHandler:
                 self.conversation_history.append(("assistant", response))
                 return response, {}
             if self._is_policy_question(user_input):
-                return self._run_tool_lookup(user_input)
+                return self._run_tool_lookup(user_input, stream=stream, on_step=on_step)
 
         self._merge_pending_identity(extracted)
         has_order = self.pending_identity.get("order_id") is not None
@@ -202,9 +273,9 @@ class OrderChatHandler:
         if not self.last_db_results and (
             self._is_order_inquiry(user_input) or self._is_policy_question(user_input)
         ):
-            return self._run_tool_lookup(user_input)
+            return self._run_tool_lookup(user_input, stream=stream, on_step=on_step)
 
-        return self._continue_with_context(user_input), {}
+        return self._continue_with_context(user_input, stream=stream), {}
 
     def _merge_pending_identity(self, extracted) -> bool:
         """Merge identity fields from a message into pending_identity.
@@ -257,14 +328,18 @@ class OrderChatHandler:
         self.conversation_history.append(("assistant", response))
         return response, db_results
 
-    def _run_tool_lookup(self, user_input):
-        """Resolve an ambiguous order inquiry through the tool-calling model.
+    def _run_tool_lookup(self, user_input, stream=False, on_step=None):
+        """Resolve an ambiguous inquiry through the tool-calling model.
 
-        The lookup_order tool enforces the two-field rule server-side. Tool
-        results seed pending_identity / stored context so later deterministic
-        turns can continue naturally.
+        The tools enforce verification server-side; tool execution is identical
+        in both modes. Only the FINAL model call switches invoke→stream when
+        streaming, with the grounded/two-field fallback computed in the
+        generator tail if the streamed output ends up empty.
         """
         try:
+            if on_step:
+                step = "Searching policies…" if self._is_policy_question(user_input) else "Verifying order details…"
+                on_step(step)
             messages = ChatPromptTemplate.from_messages(self._build_message_list(user_input)).format_messages()
             first = self.llm_with_tools.invoke(messages)
             tool_calls = getattr(first, "tool_calls", None) or []
@@ -292,16 +367,37 @@ class OrderChatHandler:
 
                 messages.append(ToolMessage(content=json.dumps(payload), tool_call_id=tool_call_id))
 
-            final = self.llm_with_tools.invoke(messages)
-            response = getattr(final, "content", "") or (
-                self._format_grounded_lookup(db_results) if db_results else self._two_field_prompt()
-            )
-            self.conversation_history.append(("assistant", response))
-            return response, db_results
+            if on_step:
+                on_step("Composing answer…")
+
+            if not stream:
+                final = self.llm_with_tools.invoke(messages)
+                response = getattr(final, "content", "") or (
+                    self._format_grounded_lookup(db_results) if db_results else self._two_field_prompt()
+                )
+                self.conversation_history.append(("assistant", response))
+                return response, db_results
+
+            def _gen():
+                pieces = []
+                for chunk in self.llm_with_tools.stream(messages):
+                    piece = getattr(chunk, "content", "") or ""
+                    if piece:
+                        pieces.append(piece)
+                        yield piece
+                full = "".join(pieces)
+                if not full.strip():
+                    full = self._format_grounded_lookup(db_results) if db_results else self._two_field_prompt()
+                    yield full
+                self.conversation_history.append(("assistant", full))
+
+            return _gen(), db_results
         except Exception:
             logger.exception("Tool lookup failed")
             response = self._two_field_prompt()
             self.conversation_history.append(("assistant", response))
+            if stream:
+                return iter([response]), {}
             return response, {}
 
     def _execute_order_lookup(self, args: dict) -> dict:
@@ -385,18 +481,37 @@ class OrderChatHandler:
             messages.append(("human", user_input))
         return messages
 
-    def _continue_with_context(self, user_input):
-        """Answer a follow-up from stored context, or conversationally without data."""
+    def _continue_with_context(self, user_input, stream=False):
+        """Answer a follow-up from stored context, or conversationally without data.
+
+        Returns the full text — or, when streaming, an iterator of deltas.
+        Conversation history is appended before any text is produced either way.
+        """
         deterministic_response = self._format_order_follow_up(user_input)
         if deterministic_response:
             self.conversation_history.append(("assistant", deterministic_response))
+            if stream:
+                return iter([deterministic_response])
             return deterministic_response
 
         prompt_template = ChatPromptTemplate.from_messages(self._build_message_list(user_input))
         chain = prompt_template | self.llm
-        response = chain.invoke({})
-        self.conversation_history.append(("assistant", response.content))
-        return response.content
+
+        if not stream:
+            response = chain.invoke({})
+            self.conversation_history.append(("assistant", response.content))
+            return response.content
+
+        def _gen():
+            pieces = []
+            for chunk in chain.stream({}):
+                piece = getattr(chunk, "content", "") or ""
+                if piece:
+                    pieces.append(piece)
+                    yield piece
+            self.conversation_history.append(("assistant", "".join(pieces)))
+
+        return _gen()
 
     @staticmethod
     def _criteria_from_args(args: dict) -> dict:

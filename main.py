@@ -1,18 +1,8 @@
-import time
-
 import streamlit as st
 
 from chat_handler import OrderChatHandler
-from database import (
-    format_event_line,
-    format_order_for_display,
-    format_order_number,
-    format_timestamp,
-    get_messages,
-    get_order_timeline,
-    record_feedback,
-)
-from sidebar import render_sidebar
+from database import get_messages, record_feedback
+from sidebar import invalidate_recent_chats_cache, render_sidebar
 
 
 st.set_page_config(page_title="Order Status Assistant", page_icon="📦", layout="wide", initial_sidebar_state="expanded")
@@ -22,32 +12,130 @@ def apply_theme() -> None:
     st.markdown(
         """
         <style>
-            .block-container { max-width: 1240px; padding: 2.75rem 3rem 3rem; }
-            [data-testid="stSidebar"] { border-right: 1px solid rgba(49, 51, 63, 0.15); min-width: 340px; }
-            [data-testid="stSidebar"] > div:first-child { padding-top: 1.5rem; }
-            [data-testid="stChatMessage"] { border-radius: 14px; }
-            .support-eyebrow { color: #5c6ac4; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-            .support-subtitle { color: #5f6368; font-size: 1.05rem; margin-bottom: 1.25rem; }
-            .lookup-panel-title { margin-bottom: 0; }
+            /* ── One-page lock ────────────────────────────────────────────
+               The browser never scrolls; individual panes own their own
+               scrollbars (chat transcript, sidebar overflow). */
+            .stApp { height: 100vh; overflow: hidden; }
+            [data-testid="stHeader"] { display: none; }
+            #MainMenu, footer { visibility: hidden; }
+
+            [data-testid="stMain"],
+            [data-testid="stMainBlockContainer"] {
+                height: 100vh;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .block-container {
+                max-width: 1400px;
+                padding: .5rem 1.25rem 0;
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                min-height: 0;
+            }
+
+            /* ── Centered reading column ─────────────────────────────────
+               Header, transcript, status hints and input share one spine. */
+            .block-container [data-testid="stElementContainer"],
+            .block-container [data-testid="stHorizontalBlock"],
+            .block-container [data-testid="stVerticalBlock"],
+            .block-container [data-testid="stVerticalBlockBorderless"] {
+                max-width: 840px;
+                width: 100%;
+                margin-inline: auto;
+            }
+
+            /* Transcript pane fills whatever vertical space remains.
+               Reserve ≈ header row + chat input + paddings (~150px).
+               !important overrides the inline height Streamlit sets. */
+            .block-container [data-testid="stVerticalBlockBorderless"] {
+                height: calc(100vh - 150px) !important;
+                max-height: none;
+            }
+
+            /* ── Chat surfaces ─────────────────────────────────────────── */
+            [data-testid="stChatMessage"] {
+                background: #f6f7f9;
+                border: 1px solid #e7e9ee;
+                border-radius: 12px;
+                padding: .65rem .9rem;
+            }
+            [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p:last-child { margin-bottom: 0; }
+
+            [data-testid="stChatInput"] textarea,
+            [data-testid="stChatInput"] [contenteditable="true"] {
+                background: #fff;
+                border: 1px solid #dfe3ea;
+                border-radius: 999px;
+                box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+            }
+            [data-testid="stChatInput"]:focus-within textarea,
+            [data-testid="stChatInput"]:focus-within [contenteditable="true"] {
+                border-color: #5c6ac4;
+                box-shadow: 0 0 0 3px rgba(92, 106, 196, .15);
+            }
+
+            /* Slim scrollbar on the transcript only */
+            .block-container [data-testid="stVerticalBlockBorderless"]::-webkit-scrollbar { width: 6px; }
+            .block-container [data-testid="stVerticalBlockBorderless"]::-webkit-scrollbar-thumb {
+                background: rgba(16, 24, 40, .18);
+                border-radius: 999px;
+            }
+
+            /* ── Sidebar micro-pass ────────────────────────────────────── */
+            [data-testid="stSidebar"] {
+                border-right: 1px solid rgba(49, 51, 63, 0.15);
+                min-width: 340px;
+            }
+            [data-testid="stSidebarContent"] { overflow-y: auto; padding-top: 1rem; }
+            [data-testid="stSidebar"] h2,
+            [data-testid="stSidebar"] h3 {
+                font-size: .78rem;
+                letter-spacing: .08em;
+                text-transform: uppercase;
+                color: #5f6368;
+                margin: 0 0 .35rem;
+            }
+            [data-testid="stSidebar"] [data-testid="stTextInput"] input,
+            [data-testid="stSidebar"] [data-testid="stNumberInput"] input {
+                font-size: .85rem;
+                padding: .3rem .5rem;
+            }
+
+            .brand-row h1 { font-size: 1.35rem; margin: 0; line-height: 1.15; }
+            .lookup-panel-title { font-size: 1rem; margin: 0; }
+
+            /* ── Empty-state hero ──────────────────────────────────────── */
+            .chat-hero { text-align: center; padding-top: 14vh; color: #444; }
+            .hero-mark { font-size: 2rem; }
+            .hero-title { font-size: 1.05rem; font-weight: 600; margin: .35rem 0 .6rem; color: #202124; }
+            .kbd {
+                background: #eef0f4;
+                border: 1px solid #dde1e8;
+                border-radius: 6px;
+                padding: .1rem .45rem;
+                font-size: .85em;
+                white-space: nowrap;
+            }
+            .hint-line, .example-line { color: #5f6368; font-size: .9rem; margin-top: .35rem; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def typewriter(text: str, word_delay: float = 0.02):
-    """Yield a response word by word so replies render progressively."""
-    words = text.split(" ")
-    for index, word in enumerate(words):
-        yield word + (" " if index < len(words) - 1 else "")
-        if index < len(words) - 1:
-            time.sleep(word_delay)
-
-
 # Sentinel: this browser session has not decided which conversation to view
 # yet. The URL ?chat= parameter is honored only while the sentinel is set, so
 # a stale URL can never resurrect a conversation after an explicit "New chat".
 FIRST_LOAD = "UNSET"
+
+# Chat transcript renders inside a scrollable pane so the input stays pinned
+# below it while messages stream in. Pre-CSS fallback only: apply_theme()'s
+# stylesheet overrides this height responsively (calc(100vh - 150px)) so the
+# transcript always fills exactly the remaining viewport.
+TRANSCRIPT_HEIGHT = 400
 
 
 def _load_conversation(conversation_id: str) -> None:
@@ -60,7 +148,6 @@ def _load_conversation(conversation_id: str) -> None:
         for message in get_messages(conversation_id)
         if message.get("content")
     ]
-    st.session_state.streamed_index = max(len(st.session_state.messages) - 1, -1)
     st.query_params["chat"] = conversation_id
 
 
@@ -69,8 +156,6 @@ def initialize_session_state() -> None:
         st.session_state.messages = []
     if "last_db_results" not in st.session_state:
         st.session_state.last_db_results = {}
-    if "streamed_index" not in st.session_state:
-        st.session_state.streamed_index = -1
     if "viewing_conversation_id" not in st.session_state:
         st.session_state.viewing_conversation_id = FIRST_LOAD
 
@@ -102,7 +187,6 @@ def start_new_chat() -> None:
     st.session_state.messages = []
     st.session_state.last_db_results = {}
     st.session_state.chat_handler.clear_context()
-    st.session_state.streamed_index = -1
     st.session_state.pop("feedback_given", None)
     # Reset the sidebar picker to its neutral placeholder so it stops pointing
     # at the conversation we just left.
@@ -112,32 +196,19 @@ def start_new_chat() -> None:
 
 
 def render_header() -> None:
-    left, right = st.columns([5, 1])
+    left, right = st.columns([4, 1], vertical_alignment="center")
     with left:
-        st.title("Order Support")
-        st.markdown(
-            '<div class="support-subtitle">Look up live order details or ask the assistant for a clear customer-ready update.</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="brand-row"><h1>Order Support</h1></div>', unsafe_allow_html=True)
     with right:
-        st.write("")
-        st.write("")
         st.button("New chat", on_click=start_new_chat, use_container_width=True)
 
 
-def handle_user_input(user_input: str) -> None:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    st.session_state.pop("feedback_given", None)
-    try:
-        with st.spinner("Checking order details..."):
-            ai_response, db_results = st.session_state.chat_handler.process_user_message(user_input)
-        if db_results:
-            st.session_state.last_db_results = db_results
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-    except Exception:
-        st.session_state.messages.append(
-            {"role": "assistant", "content": "I couldn't complete that lookup. Please verify the search value and try again."}
-        )
+def _rerun_app() -> None:
+    """Rerun the whole app whether or not fragments are available."""
+    if hasattr(st, "fragment"):
+        st.rerun(scope="app")
+    else:
+        st.rerun()
 
 
 def render_feedback_buttons(message_index: int) -> None:
@@ -161,72 +232,66 @@ def render_feedback_buttons(message_index: int) -> None:
 
 
 def render_chat_interface() -> None:
-    if not st.session_state.messages:
-        st.info("I need two details to verify an order: your order number plus your email, phone number, or name. Example: `check order 42, email you@example.com`")
-
-    for index, message in enumerate(st.session_state.messages):
-        with st.chat_message(message["role"]):
-            is_latest_assistant = message["role"] == "assistant" and index == len(st.session_state.messages) - 1
-            if is_latest_assistant and index > st.session_state.streamed_index:
-                st.write_stream(typewriter(message["content"]))
-                st.session_state.streamed_index = index
-            else:
-                st.markdown(message["content"])
-            if message["role"] == "assistant" and index == len(st.session_state.messages) - 1:
-                render_feedback_buttons(index)
-
     prompt = st.chat_input("Ask about an order, customer, delivery, or payment status…")
-    if prompt:
-        handle_user_input(prompt)
-        st.rerun()
+    if prompt and not st.session_state.pop("pending_stream", None):
+        # Phase 1: stash the prompt and normalize instantly so the input snaps
+        # back beneath the transcript before any slow work starts.
+        st.session_state.pending_stream = prompt
+        _rerun_app()
+
+    pending = st.session_state.pop("pending_stream", None)
+
+    # Transcript lives in a fixed-height scrollable pane; the input stays
+    # pinned below it while messages arrive.
+    with st.container(height=TRANSCRIPT_HEIGHT):
+        if not st.session_state.messages and not pending:
+            st.markdown(
+                """
+                <div class="chat-hero">
+                  <div class="hero-mark">📦</div>
+                  <div class="hero-title">Track any order in seconds</div>
+                  <div class="hint-line">Two details unlock an order:</div>
+                  <div><span class="kbd">order number</span> plus
+                       <span class="kbd">email</span> / <span class="kbd">phone</span> /
+                       <span class="kbd">name</span></div>
+                  <div class="example-line">try&nbsp;<span class="kbd">check order 42, email you@example.com</span></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        if pending:
+            st.session_state.messages.append({"role": "user", "content": pending})
+            with st.chat_message("user"):
+                st.markdown(pending)
+
+            handler = st.session_state.chat_handler
+            status_slot = st.empty()
+
+            def report_status(step: str) -> None:
+                status_slot.caption(step)
+
+            with st.chat_message("assistant"):
+                try:
+                    full_response = st.write_stream(handler.stream_response(pending, on_step=report_status))
+                except Exception:
+                    # stream_response already guards internally; last resort only.
+                    full_response = "I couldn't complete that lookup. Please verify the search value and try again."
+                    st.markdown(full_response)
+                finally:
+                    status_slot.empty()
+
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            invalidate_recent_chats_cache()
+            _rerun_app()
 
 
-def render_manual_lookup_results() -> None:
-    if "manual_lookup_results" not in st.session_state:
-        return
-
-    results = st.session_state.manual_lookup_results
-    label = st.session_state.get("manual_lookup_label", "Manual lookup")
-    st.divider()
-    if not results:
-        st.warning(f"No orders found for {label}. Try a different lookup value.")
-        return
-
-    title_col, action_col = st.columns([5, 1])
-    with title_col:
-        st.markdown('<h3 class="lookup-panel-title">Manual lookup results</h3>', unsafe_allow_html=True)
-        st.caption(f"{label} · {len(results)} matching order{'s' if len(results) != 1 else ''}")
-    with action_col:
-        if st.button("Clear results", use_container_width=True, key="clear_main_lookup"):
-            st.session_state.pop("manual_lookup_results", None)
-            st.session_state.pop("manual_lookup_label", None)
-            st.rerun()
-
-    for order in results:
-        shipment = (order.get("shipments") or [{}])[0]
-        customer = order.get("customers") or {}
-        with st.container(border=True):
-            header, status_column, total_column = st.columns([3, 2, 2])
-            with header:
-                st.subheader(f"Order #{format_order_number(order.get('public_order_id'))}")
-                st.caption(customer.get("full_name", "Customer unavailable"))
-            with status_column:
-                st.metric("Status", order.get("status", "Unknown"))
-            with total_column:
-                amount = float(order.get("total_amount") or 0)
-                st.metric("Order total", f"{order.get('currency', 'USD')} {amount:,.2f}")
-
-            delivery = shipment.get("delivered_at") or shipment.get("estimated_delivery_at")
-            if delivery:
-                delivery_label = "Delivered" if shipment.get("delivered_at") else "Estimated delivery"
-                st.caption(f"{delivery_label}: {format_timestamp(delivery)}")
-            with st.expander("View complete order details"):
-                st.markdown(format_order_for_display(order))
-                timeline = get_order_timeline(order)
-                if timeline:
-                    st.markdown("**Event timeline**")
-                    for event in timeline:
-                        st.markdown(f"- {format_event_line(event)}")
+if hasattr(st, "fragment"):
+    render_chat_interface = st.fragment(render_chat_interface)
 
 
 def main() -> None:
@@ -234,10 +299,7 @@ def main() -> None:
     initialize_session_state()
     render_sidebar()
     render_header()
-    render_manual_lookup_results()
     render_chat_interface()
-    st.divider()
-    st.caption("For order changes, cancellations, or address updates, follow your support-team process.")
 
 
 if __name__ == "__main__":

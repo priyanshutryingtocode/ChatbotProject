@@ -45,20 +45,37 @@ def extract_info_from_query(query):
             if len(clean_phone) == 10 and clean_phone.isdigit():
                 info['phones'].append(clean_phone)
     
+    # Name captures are word-capped (max three words) so surrounding prose can
+    # never be swallowed into an identity value, and delimiter-anchored so a
+    # bare "name …" mention doesn't grab whatever follows it.
+    name_word = r'([A-Za-z]+(?:\s+[A-Za-z]+){0,2})'
     name_patterns = [
-        r'name[:\s]+([A-Za-z][A-Za-z\s]{1,30})',        # "name: John Doe"
-        r'customer[:\s]+([A-Za-z][A-Za-z\s]{1,30})',     # "customer: John Doe"
-        r"(?:my name is|my name's|i'?m|i am|this is) ([A-Za-z][A-Za-z\s]{1,30})",  # "my name is John Doe", "i'm John Doe"
-        r'([A-Za-z][A-Za-z\s]{1,30})\s+is my name',     # "John Doe is my name"
+        rf'\b(?:full\s+)?name\b\s*(?::|\bis\b)\s*{name_word}',   # "name: Jane Doe", "name is Gaurang"
+        rf'\bcustomer\b\s*(?::|\bis\b)\s*{name_word}',            # "customer: John Doe"
+        rf"(?:my name is|my name's|i'?m|i am|this is)\s+{name_word}",  # "my name is Jane Doe", "i'm John"
+        rf'{name_word}\s+is my name',                           # "Jane Doe is my name"
+        # Prose bridge: "the name on it should be gaurang", "name was wrong: it's Ana"
+        rf'\bname\b[^.!?\n]{{0,30}}?\b(?:should\s+be|is|was)\s+{name_word}',
     ]
-    
+
     for pattern in name_patterns:
         matches = re.findall(pattern, query, re.IGNORECASE)
         for name in matches:
             clean_name = re.sub(r'^(?:my|i|is|am|are)\s+', '', name.strip(), flags=re.IGNORECASE)
             if len(clean_name) > 2 and not any(c.isdigit() for c in clean_name):
                 info['names'].append(clean_name)
-    
+
+    # Patterns intentionally overlap (e.g. "name is X" hits two rules);
+    # dedupe case-insensitively while preserving order.
+    seen = set()
+    unique_names = []
+    for name in info['names']:
+        key = name.lower()
+        if key not in seen:
+            seen.add(key)
+            unique_names.append(name)
+    info['names'] = unique_names
+
     return info
 
 

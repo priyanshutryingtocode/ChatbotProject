@@ -1,10 +1,11 @@
 /.env
 /venv
 /__pycache__
-
 /~$cumentation.docx
 /.streamlit
-
 /data
 /supabase
 __pycache__
+/knowledge
+/tests
+
