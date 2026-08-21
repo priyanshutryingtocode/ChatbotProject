@@ -44,3 +44,30 @@ class TestLookupOrderTool:
             )
         )
         assert payload["status"] == "found"
+
+
+class TestSearchPolicyTool:
+    def test_found_returns_labelled_context(self, monkeypatch):
+        monkeypatch.setattr(
+            tools, "retrieve_policies", lambda question, k=4: "[source: Returns › Return window]\n30-day window."
+        )
+        payload = json.loads(tools.search_policy.invoke({"question": "what is the return window?"}))
+        assert payload["status"] == "found"
+        assert "RETRIEVED POLICIES" in payload["context"]
+        assert "30-day window" in payload["context"]
+        assert "[source: Returns" in payload["context"]
+
+    def test_no_match_when_retriever_finds_nothing(self, monkeypatch):
+        monkeypatch.setattr(tools, "retrieve_policies", lambda question, k=4: None)
+        payload = json.loads(tools.search_policy.invoke({"question": "quantum entanglement?"}))
+        assert payload["status"] == "no_match"
+
+    def test_passes_question_through_to_retriever(self, monkeypatch):
+        seen = {}
+        def fake_retrieve(question, k=4):
+            seen["question"] = question
+            return None
+
+        monkeypatch.setattr(tools, "retrieve_policies", fake_retrieve)
+        tools.search_policy.invoke({"question": "shipping charges?"})
+        assert seen["question"] == "shipping charges?"
