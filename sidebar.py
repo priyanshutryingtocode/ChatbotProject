@@ -4,7 +4,7 @@ import re
 
 import streamlit as st
 
-from database import find_orders, normalize_phone
+from database import find_orders, format_timestamp, list_conversations, normalize_phone
 
 
 def _validate_fields(order_id: str, email: str, phone: str, name: str) -> str | None:
@@ -39,6 +39,44 @@ def _run_lookup(order_id: str, email: str, phone: str, name: str) -> list[dict]:
         return find_orders(criteria, require_order_id=True)
     except ValueError:
         return []
+
+
+def _on_recent_chat_change() -> None:
+    """Radio callback: queue a resume only on genuine user selection."""
+    choice = st.session_state.get("recent_chat_choice")
+    target_id = st.session_state.get("recent_chat_options_map", {}).get(choice)
+    if target_id:
+        st.session_state.resume_conversation_id = target_id
+
+
+def render_recent_chats() -> None:
+    """List recent conversations; picking one resumes it in the workspace.
+
+    Selection is event-driven (radio on_change) — never inferred by comparing
+    displayed state against the current view on every rerun, so a deliberate
+    fresh start can't be overridden by whatever the radio happens to show.
+    """
+    conversations = list_conversations()
+    if not conversations:
+        return
+
+    st.divider()
+    st.header("Recent chats")
+
+    options: dict[str, str] = {"— select a chat —": ""}
+    for convo in conversations:
+        state_label = "ended" if convo.get("ended_at") else "active"
+        label = f"{format_timestamp(convo.get('created_at'))} · {state_label}"
+        options[label] = convo["id"]
+    st.session_state.recent_chat_options_map = options
+
+    st.radio(
+        "Resume a conversation",
+        list(options.keys()),
+        key="recent_chat_choice",
+        label_visibility="collapsed",
+        on_change=_on_recent_chat_change,
+    )
 
 
 def render_sidebar() -> None:
@@ -80,3 +118,5 @@ def render_sidebar() -> None:
 
         st.divider()
         st.caption("Tip: use the chat for follow-up questions after an order is found.")
+
+        render_recent_chats()

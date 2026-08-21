@@ -295,3 +295,34 @@ def record_feedback(message_id: str, feedback: str) -> None:
         _client().table("messages").update({"feedback": feedback}).eq("id", message_id).execute()
     except Exception:
         logger.exception("Failed to record feedback")
+
+
+def list_conversations(limit: int = 10) -> list[dict]:
+    """Most recent conversations, newest first. Best-effort, never raises."""
+    try:
+        response = (
+            _client().table("conversations")
+            .select("id, channel, customer_email, created_at, ended_at")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return response.data or []
+    except Exception:
+        logger.exception("Failed to list conversations")
+        return []
+
+
+def get_order_timeline(order: dict | None) -> list[dict]:
+    """Chronological order events (oldest first) for timeline rendering."""
+    if not order:
+        return []
+    return sorted(order.get("order_events") or [], key=_event_sort_key)
+
+
+def format_event_line(event: dict) -> str:
+    """One human-readable timeline row for an order event."""
+    event_type = (event.get("event_type") or "update").replace("_", " ").title()
+    line = f"{event_type} · {format_timestamp(event.get('event_at'))}"
+    message = event.get("message")
+    return f"{line} — {message}" if message else line

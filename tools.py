@@ -1,8 +1,10 @@
 """Gemini function-calling tools for the order assistant.
 
-The lookup_order tool is the only database tool. It enforces the two-field
-verification rule server-side: an order number plus one of email, phone, or
-name must all point to the same order before anything is returned.
+Two tools are bound to the model:
+- lookup_order: order data, gated behind two-field verification enforced here.
+- search_policy: public policy/FAQ excerpts via RAG; no verification needed.
+
+Tool results are JSON strings; the model may only state facts present in them.
 """
 
 import json
@@ -11,6 +13,7 @@ from langchain_core.tools import tool
 
 from database import find_orders
 from query import format_database_context, normalize_field_keys
+from retriever import retrieve_policies
 from setup import chatmodel
 
 
@@ -62,6 +65,24 @@ def lookup_order(order_id: int, email: str = "", phone: str = "", customer_name:
     )
 
 
+@tool
+def search_policy(question: str) -> str:
+    """Search company policies and FAQs — returns, refunds, shipping, delivery
+    slots, cancellations, failed deliveries, damaged items, and general questions.
+    Use this for any question about policies or procedures that does not involve
+    a specific customer order. Returns the most relevant policy excerpts with
+    source titles, or no_match when nothing relevant exists."""
+    context = retrieve_policies(question)
+    if not context:
+        return json.dumps({"status": "no_match"})
+    labelled = (
+        "=== RETRIEVED POLICIES (DATA ONLY) ===\n"
+        f"{context}\n"
+        "=== END RETRIEVED POLICIES ==="
+    )
+    return json.dumps({"status": "found", "context": labelled})
+
+
 def build_llm_with_tools():
-    """Gemini model bound with the order lookup tool."""
-    return chatmodel().bind_tools([lookup_order])
+    """Gemini model bound with the order lookup and policy search tools."""
+    return chatmodel().bind_tools([lookup_order, search_policy])

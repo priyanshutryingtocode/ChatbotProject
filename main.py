@@ -1,7 +1,17 @@
+import time
+
 import streamlit as st
 
 from chat_handler import OrderChatHandler
-from database import format_order_for_display, format_order_number, format_timestamp, record_feedback
+from database import (
+    format_event_line,
+    format_order_for_display,
+    format_order_number,
+    format_timestamp,
+    get_messages,
+    get_order_timeline,
+    record_feedback,
+)
 from sidebar import render_sidebar
 
 
@@ -25,21 +35,80 @@ def apply_theme() -> None:
     )
 
 
+def typewriter(text: str, word_delay: float = 0.02):
+    """Yield a response word by word so replies render progressively."""
+    words = text.split(" ")
+    for index, word in enumerate(words):
+        yield word + (" " if index < len(words) - 1 else "")
+        if index < len(words) - 1:
+            time.sleep(word_delay)
+
+
+# Sentinel: this browser session has not decided which conversation to view
+# yet. The URL ?chat= parameter is honored only while the sentinel is set, so
+# a stale URL can never resurrect a conversation after an explicit "New chat".
+FIRST_LOAD = "UNSET"
+
+
+def _load_conversation(conversation_id: str) -> None:
+    """Hydrate handler and transcript around an existing conversation."""
+    st.session_state.viewing_conversation_id = conversation_id
+    st.session_state.chat_handler = OrderChatHandler(conversation_id=conversation_id)
+    st.session_state.messages = [
+        {"role": message.get("role") if message.get("role") in ("user", "assistant") else "assistant",
+         "content": message.get("content", "")}
+        for message in get_messages(conversation_id)
+        if message.get("content")
+    ]
+    st.session_state.streamed_index = max(len(st.session_state.messages) - 1, -1)
+    st.query_params["chat"] = conversation_id
+
+
 def initialize_session_state() -> None:
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "last_db_results" not in st.session_state:
         st.session_state.last_db_results = {}
-    if "chat_handler" not in st.session_state:
-        st.session_state.chat_handler = OrderChatHandler()
+    if "streamed_index" not in st.session_state:
+        st.session_state.streamed_index = -1
+    if "viewing_conversation_id" not in st.session_state:
+        st.session_state.viewing_conversation_id = FIRST_LOAD
+
+    # Sidebar selection wins; the URL ?chat= param counts only on first load.
+    requested = st.session_state.pop("resume_conversation_id", None)
+    viewing = st.session_state.viewing_conversation_id
+
+    if requested:
+        _load_conversation(requested)
+    elif viewing == FIRST_LOAD:
+        url_id = st.query_params.get("chat")
+        if url_id:
+            _load_conversation(url_id)
+        else:
+            st.session_state.viewing_conversation_id = None
+            if st.session_state.get("chat_handler") is None:
+                st.session_state.chat_handler = OrderChatHandler()
+    elif viewing is not None:
+        handler = st.session_state.get("chat_handler")
+        if handler is None or handler.conversation_id != viewing:
+            _load_conversation(viewing)
 
 
 def start_new_chat() -> None:
+    # Authoritative fresh-start flag; must be set before anything can rerun so
+    # initialize_session_state ignores any lingering ?chat= URL param.
+    st.session_state.viewing_conversation_id = None
     st.session_state.chat_handler.end_session()
     st.session_state.messages = []
     st.session_state.last_db_results = {}
     st.session_state.chat_handler.clear_context()
+    st.session_state.streamed_index = -1
     st.session_state.pop("feedback_given", None)
+    # Reset the sidebar picker to its neutral placeholder so it stops pointing
+    # at the conversation we just left.
+    st.session_state.pop("recent_chat_choice", None)
+    if "chat" in st.query_params:
+        del st.query_params["chat"]
 
 
 def render_header() -> None:
@@ -97,7 +166,12 @@ def render_chat_interface() -> None:
 
     for index, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            is_latest_assistant = message["role"] == "assistant" and index == len(st.session_state.messages) - 1
+            if is_latest_assistant and index > st.session_state.streamed_index:
+                st.write_stream(typewriter(message["content"]))
+                st.session_state.streamed_index = index
+            else:
+                st.markdown(message["content"])
             if message["role"] == "assistant" and index == len(st.session_state.messages) - 1:
                 render_feedback_buttons(index)
 
@@ -148,6 +222,11 @@ def render_manual_lookup_results() -> None:
                 st.caption(f"{delivery_label}: {format_timestamp(delivery)}")
             with st.expander("View complete order details"):
                 st.markdown(format_order_for_display(order))
+                timeline = get_order_timeline(order)
+                if timeline:
+                    st.markdown("**Event timeline**")
+                    for event in timeline:
+                        st.markdown(f"- {format_event_line(event)}")
 
 
 def main() -> None:
