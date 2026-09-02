@@ -35,7 +35,26 @@ def apply_theme() -> None:
         }
 
         [data-testid="stHeader"] {
-            display: none;
+            background: transparent;
+            pointer-events: none;
+        }
+
+        [data-testid="stHeader"] * {
+            pointer-events: auto;
+        }
+
+        [data-testid="stHeader"] [data-testid="stToolbar"] {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"],
+        button[kind="headerNoPadding"] {
+            visibility: visible !important;
+            display: flex !important;
+            pointer-events: auto !important;
+            z-index: 9999 !important;
         }
 
         #MainMenu,

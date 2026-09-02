@@ -4,7 +4,7 @@ langchain-openai
 langchain-google-genai
 google-genai
 langchain-community
-streamlit
+streamlit==1.45.1
 langchain-experimental
 supabase
 python-dotenv

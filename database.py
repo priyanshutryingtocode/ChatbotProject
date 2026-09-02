@@ -6,7 +6,9 @@ browser code or expose the service-role key it uses.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 from setup import supabase_server_client
 
@@ -33,16 +35,16 @@ def format_order_number(order_id: int | str | None) -> str:
 
 
 def format_timestamp(timestamp: str | None) -> str:
-    """Turn ISO 8601 timestamps from Supabase into a readable UTC label."""
+    """Turn ISO 8601 timestamps from Supabase into a readable IST label."""
     if not timestamp:
         return "Not available"
     try:
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        parsed = parsed.astimezone(timezone.utc)
+        parsed = parsed.astimezone(IST)
         hour = parsed.strftime("%I").lstrip("0") or "0"
-        return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year} at {hour}:{parsed.strftime('%M %p')} UTC"
+        return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year} at {hour}:{parsed.strftime('%M %p')} IST"
     except (TypeError, ValueError):
         return timestamp
 
