@@ -75,7 +75,7 @@ def _sdk_embed(texts: list[str]) -> list[list[float]]:
             response = client.models.embed_content(model=EMBEDDING_MODEL, contents=texts)
         return [list(item.values) for item in response.embeddings]
     except ImportError:
-        import google.generativeai as genai_legacy
+        import google.generativeai as genai_legacy # type: ignore
 
         genai_legacy.configure(api_key=GEMINI_API_KEY)
         response = genai_legacy.embed_content(
