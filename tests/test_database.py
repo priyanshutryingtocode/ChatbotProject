@@ -23,7 +23,8 @@ class TestFormatTimestamp:
     def test_formats_iso_z_timestamp(self):
         result = database.format_timestamp("2026-08-05T15:00:00Z")
         assert "2026" in result
-        assert "UTC" in result
+        assert "IST" in result
+        assert "8:30 PM" in result
 
     def test_missing_timestamp(self):
         assert database.format_timestamp(None) == "Not available"

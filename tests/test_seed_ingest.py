@@ -5,6 +5,8 @@ real temp markdown files, so the full per-document sequence runs without any
 network or embedding API access.
 """
 
+from copy import deepcopy
+
 import pytest
 
 import seed_knowledge
@@ -92,45 +94,77 @@ class _Query:
         raise AssertionError(f"unhandled call: {self._t}/{self._mode}")
 
 
+class _RPC:
+    def __init__(self, client, name, params):
+        self._c = client
+        self._name = name
+        self._params = params
+
+    def execute(self):
+        assert self._name == "replace_knowledge_document"
+        client = self._c
+        if client.fail_on_replace:
+            raise RuntimeError("document replacement failed")
+
+        documents = deepcopy(client.documents)
+        chunks = deepcopy(client.chunks)
+        title = self._params["p_title"]
+        row = documents.get(title)
+        if row is None:
+            row = {"id": client._next_id, "title": title}
+            client._next_id += 1
+            documents[title] = row
+        row.update({
+            "source_file": self._params["p_source_file"],
+            "content_hash": self._params["p_content_hash"],
+        })
+        document_id = row["id"]
+        chunks[document_id] = [
+            {"document_id": document_id, **chunk}
+            for chunk in self._params["p_chunks"]
+        ]
+        client.documents = documents
+        client.chunks = chunks
+        client.log.append(("rpc", self._name, deepcopy(self._params)))
+        return _Resp([{"replace_knowledge_document": document_id}])
+
+
 class _FakeClient:
     def __init__(self, documents=None, chunks=None):
         # documents: {title: {id, title, content_hash, source_file}}
         self.documents = dict(documents or {})
         self.chunks = dict(chunks or {})  # {document_id: [rows]}
         self.log = []
-        self.fail_on_chunks_insert = False
+        self.fail_on_replace = False
         self._next_id = max((d["id"] for d in self.documents.values()), default=0) + 1
 
     def table(self, name):
         return _Query(self, name)
+
+    def rpc(self, name, params):
+        return _RPC(self, name, params)
 
 
 def _run(monkeypatch, tmp_path, *, reingest=False, fail_chunks=False, preexisting=None, prechunks=None):
     (tmp_path / "returns.md").write_text(MD, encoding="utf-8")
     digest = seed_knowledge.file_hash(tmp_path / "returns.md")
     client = _FakeClient(documents=preexisting, chunks=prechunks)
-    client.fail_on_chunks_insert = fail_chunks
+    client.fail_on_replace = fail_chunks
     monkeypatch.setattr(seed_knowledge, "embed_texts", lambda texts: [[0.25] * 768 for _ in texts])
     summary = seed_knowledge.ingest(client, tmp_path, reingest=reingest)
     return client, summary, digest
 
 
 class TestIngestNewDocument:
-    def test_placeholder_hash_at_insert_real_hash_after_chunks(self, monkeypatch, tmp_path):
+    def test_atomic_rpc_writes_document_and_chunks_together(self, monkeypatch, tmp_path):
         client, summary, digest = _run(monkeypatch, tmp_path)
 
         assert summary == (1, len(client.chunks[next(iter(client.chunks))]))
 
-        inserts = [e for e in client.log if e[:2] == ("documents", "insert")]
-        assert len(inserts) == 1
-        assert inserts[0][2]["content_hash"] == ""  # inert placeholder, NOT NULL-safe
-
-        final_updates = [
-            e for e in client.log if e[:2] == ("documents", "update") and "content_hash" in e[2]
-        ]
-        assert len(final_updates) == 1
-        assert final_updates[0][2]["content_hash"] == digest
-        assert len(digest) == 64  # real sha256 hex, never collides with ""
+        writes = [e for e in client.log if e[0] == "rpc"]
+        assert len(writes) == 1
+        assert writes[0][2]["p_content_hash"] == digest
+        assert len(digest) == 64
 
         doc_row = client.documents["Returns Policy"]
         assert doc_row["content_hash"] == digest
@@ -184,26 +218,22 @@ class TestIngestReingest:
         assert summary[0] == 1
         rows = client.chunks[5]
         assert rows and all(not row.get("stale") for row in rows)
-        deletes = [e for e in client.log if e[:2] == ("chunks", "delete")]
-        assert len(deletes) == 1
+        writes = [e for e in client.log if e[0] == "rpc"]
+        assert len(writes) == 1
 
 
 class TestIngestAtomicity:
-    def test_chunk_failure_leaves_document_unmarked(self, monkeypatch, tmp_path):
+    def test_replacement_failure_leaves_document_and_chunks_unchanged(self, monkeypatch, tmp_path):
         # Built inline (not via _run) so the client exists independently of
         # the expected ingest failure.
         (tmp_path / "returns.md").write_text(MD, encoding="utf-8")
         digest = seed_knowledge.file_hash(tmp_path / "returns.md")
         client = _FakeClient()
-        client.fail_on_chunks_insert = True
+        client.fail_on_replace = True
         monkeypatch.setattr(seed_knowledge, "embed_texts", lambda texts: [[0.25] * 768 for _ in texts])
 
         with pytest.raises(RuntimeError):
             seed_knowledge.ingest(client, tmp_path, reingest=False)
 
-        # The document row exists but its hash is still the placeholder —
-        # a later run will NOT skip it as "unchanged".
-        stored = client.documents["Returns Policy"]
-        assert stored["content_hash"] == ""
-        assert stored["content_hash"] != digest
+        assert "Returns Policy" not in client.documents
         assert client.chunks == {}

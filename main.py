@@ -11,7 +11,7 @@ from sidebar import invalidate_recent_chats_cache, render_sidebar
 
 st.set_page_config(
     page_title="Order Status Assistant",
-    page_icon="📦",
+    page_icon="O",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -374,7 +374,7 @@ def render_header() -> None:
     with left:
 
         st.markdown(
-            "### 📦 Order Support"
+            "### Order Status Assistant",
         )
 
     with right:
@@ -405,7 +405,7 @@ def render_feedback_buttons(message_index: int) -> None:
     with left:
 
         if st.button(
-            "👍",
+            "Helpful",
             key=f"fb_up_{message_index}",
             help="Helpful",
         ):
@@ -429,7 +429,7 @@ def render_feedback_buttons(message_index: int) -> None:
     with right:
 
         if st.button(
-            "👎",
+            "Not helpful",
             key=f"fb_down_{message_index}",
             help="Not helpful",
         ):
@@ -466,7 +466,7 @@ def render_chat_interface() -> None:
         st.markdown(
             """
             <div class="welcome">
-                <div class="welcome-icon">📦</div>
+                <div class="welcome-icon">Order support</div>
                 <div class="welcome-title">
                     Track any order in seconds
                 </div>

@@ -98,7 +98,8 @@ docs in `knowledge/` are chunked, embedded with `gemini-embedding-001`
 question and pulls the nearest chunks via a cosine-match function; answers
 must cite the retrieved source documents.
 
-One-time setup (after applying migration `supabase/migrations/003_knowledge_rag.sql`):
+One-time setup (after applying migrations `003_knowledge_rag.sql` and
+`004_atomic_knowledge_ingest.sql`):
 
 ```bash
 python seed_knowledge.py            # ingest new/changed docs only

@@ -213,7 +213,7 @@ def format_order_for_display(order: dict | None) -> str:
     if customer.get("phone"):
         lines.append(f"Phone: {customer['phone']}")
     if items:
-        lines.append("Items: " + ", ".join(f"{item['quantity']}× {item['product_name']}" for item in items))
+        lines.append("Items: " + ", ".join(f"{item['quantity']}x {item['product_name']}" for item in items))
     if shipment.get("tracking_number"):
         lines.append(f"Tracking: {shipment['tracking_number']} ({shipment.get('carrier', 'N/A')})")
     if shipment.get("delivery_driver_name"):
@@ -224,7 +224,7 @@ def format_order_for_display(order: dict | None) -> str:
         lines.append(f"Delivered: {format_timestamp(shipment['delivered_at'])}")
     if event_history:
         latest = event_history[0]
-        lines.append(f"Latest Update: {latest.get('event_type', 'N/A')} — {format_timestamp(latest.get('event_at'))}")
+        lines.append(f"Latest Update: {latest.get('event_type', 'N/A')} - {format_timestamp(latest.get('event_at'))}")
     return "  \n".join(lines)
 
 
@@ -325,6 +325,6 @@ def get_order_timeline(order: dict | None) -> list[dict]:
 def format_event_line(event: dict) -> str:
     """One human-readable timeline row for an order event."""
     event_type = (event.get("event_type") or "update").replace("_", " ").title()
-    line = f"{event_type} · {format_timestamp(event.get('event_at'))}"
+    line = f"{event_type} - {format_timestamp(event.get('event_at'))}"
     message = event.get("message")
-    return f"{line} — {message}" if message else line
+    return f"{line} - {message}" if message else line

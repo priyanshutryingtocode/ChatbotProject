@@ -92,31 +92,14 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
             print(f"Skipping '{title}' (unchanged).")
             continue
 
-        # 1. Ensure the document row exists — but do NOT trust it with the
-        #    hash yet; that only lands after chunks are safely inserted.
-        if existing:
-            document_id = existing[0]["id"]
-            client.table("knowledge_documents").update({"source_file": path.name}).eq("id", document_id).execute()
-        else:
-            # content_hash is NOT NULL in the schema; use an inert placeholder
-            # until the real digest is committed after chunks land. "" can
-            # never false-match the skip comparison (sha256 hex).
-            inserted = (
-                client.table("knowledge_documents")
-                .insert({"title": title, "source_file": path.name, "content_hash": ""})
-                .execute()
-            )
-            document_id = inserted.data[0]["id"]
-
-        # 2. Replace all chunks (delete + embed + insert).
+        # Prepare embeddings before changing database state. The RPC below
+        # replaces the document metadata and chunks in one transaction.
         chunks = chunk_markdown(text)
-        client.table("knowledge_chunks").delete().eq("document_id", document_id).execute()
 
         contents = [body for _, body in chunks]
         vectors = embed_texts(contents) if contents else []
         rows = [
             {
-                "document_id": document_id,
                 "chunk_index": index,
                 "heading": heading,
                 "content": body,
@@ -124,13 +107,15 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
             }
             for index, ((heading, body), vector) in enumerate(zip(chunks, vectors))
         ]
-        if rows:
-            client.table("knowledge_chunks").insert(rows).execute()
-
-        # 3. Only now mark the document as complete with its content hash.
-        client.table("knowledge_documents").update(
-            {"content_hash": digest, "updated_at": "now()"}
-        ).eq("id", document_id).execute()
+        client.rpc(
+            "replace_knowledge_document",
+            {
+                "p_title": title,
+                "p_source_file": path.name,
+                "p_content_hash": digest,
+                "p_chunks": rows,
+            },
+        ).execute()
 
         documents_ingested += 1
         total_chunks += len(rows)

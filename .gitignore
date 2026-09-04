@@ -4,8 +4,8 @@
 /~$cumentation.docx
 /.streamlit
 /data
-/supabase
 __pycache__
 .pytest_cache
 /knowledge
 /tests
+/supabase

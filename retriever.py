@@ -119,7 +119,7 @@ def format_policy_context(matches: list[dict]) -> str | None:
         return None
     blocks = []
     for match in matches:
-        heading = f" › {match['heading']}" if match.get("heading") else ""
+        heading = f" > {match['heading']}" if match.get("heading") else ""
         content = (match.get("content") or "").strip()
         blocks.append(f"[source: {match.get('doc_title', 'Unknown')}{heading}]\n{content}")
     return "\n\n".join(blocks)

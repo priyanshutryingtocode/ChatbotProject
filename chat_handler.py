@@ -170,7 +170,7 @@ class OrderChatHandler:
             return
 
         if on_step:
-            on_step("Checking your request…")
+            on_step("Checking your request...")
 
         response = None
         db_results = {}
@@ -241,7 +241,7 @@ class OrderChatHandler:
                 r"\b(?:never\s*mind|forget\s*(?:it|that)|skip|nothing)\b", lowered
             ):
                 self.pending_identity = {}
-                response = "No problem — we can start over whenever you're ready. To check an order I'll need your order number plus your email, phone number, or name."
+                response = "No problem - we can start over whenever you're ready. To check an order I'll need your order number plus your email, phone number, or name."
                 self.conversation_history.append(("assistant", response))
                 return response, {}
             if self._is_policy_question(user_input):
@@ -338,7 +338,7 @@ class OrderChatHandler:
         """
         try:
             if on_step:
-                step = "Searching policies…" if self._is_policy_question(user_input) else "Verifying order details…"
+                step = "Searching policies..." if self._is_policy_question(user_input) else "Verifying order details..."
                 on_step(step)
             messages = ChatPromptTemplate.from_messages(self._build_message_list(user_input)).format_messages()
             first = self.llm_with_tools.invoke(messages)
@@ -368,7 +368,7 @@ class OrderChatHandler:
                 messages.append(ToolMessage(content=json.dumps(payload), tool_call_id=tool_call_id))
 
             if on_step:
-                on_step("Composing answer…")
+                on_step("Composing answer...")
 
             if not stream:
                 final = self.llm_with_tools.invoke(messages)
@@ -441,7 +441,7 @@ class OrderChatHandler:
             )
         have = [label for label, key in (("email", "email"), ("phone number", "phone"), ("name", "name")) if pending.get(key)]
         return (
-            f"I have your {', '.join(have)}. To verify your order, I also need your order number — "
+            f"I have your {', '.join(have)}. To verify your order, I also need your order number - "
             "for example `order 42`."
         )
 

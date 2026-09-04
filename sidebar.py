@@ -83,10 +83,10 @@ def render_recent_chats() -> None:
     st.divider()
     st.header("Recent chats")
 
-    options: dict[str, str] = {"— select a chat —": ""}
+    options: dict[str, str] = {"-- select a chat --": ""}
     for convo in conversations:
         state_label = "ended" if convo.get("ended_at") else "active"
-        label = f"{format_timestamp(convo.get('created_at'))} · {state_label}"
+        label = f"{format_timestamp(convo.get('created_at'))} - {state_label}"
         options[label] = convo["id"]
     st.session_state.recent_chat_options_map = options
 
@@ -114,7 +114,7 @@ def render_manual_lookup_results() -> None:
     title_col, action_col = st.columns([5, 1])
     with title_col:
         st.markdown('<h3 class="lookup-panel-title">Results</h3>', unsafe_allow_html=True)
-        st.caption(f"{label} · {len(results)} matching order{'s' if len(results) != 1 else ''}")
+        st.caption(f"{label} - {len(results)} matching order{'s' if len(results) != 1 else ''}")
     with action_col:
         if st.button("Clear", use_container_width=True, key="clear_main_lookup"):
             st.session_state.pop("manual_lookup_results", None)
