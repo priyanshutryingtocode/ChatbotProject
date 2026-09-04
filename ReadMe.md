@@ -98,12 +98,12 @@ docs in `knowledge/` are chunked, embedded with `gemini-embedding-001`
 question and pulls the nearest chunks via a cosine-match function; answers
 must cite the retrieved source documents.
 
-One-time setup (after applying migrations `003_knowledge_rag.sql` and
-`004_atomic_knowledge_ingest.sql`):
+One-time setup (after applying migrations `003_knowledge_rag.sql`,
+`004_atomic_knowledge_ingest.sql`, and `005_rag_retrieval_quality.sql`):
 
 ```bash
 python seed_knowledge.py            # ingest new/changed docs only
-python seed_knowledge.py --reingest # re-embed everything
+python seed_knowledge.py --reingest # re-embed everything after chunking changes
 ```
 
 Embedding calls draw from a separate quota bucket than chat generation, so

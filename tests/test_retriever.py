@@ -51,6 +51,7 @@ class TestRetrievePolicies:
         assert name == "match_knowledge_chunks"
         assert params["query_embedding"] == vector
         assert params["match_count"] == 2
+        assert params["min_similarity"] == retriever.MIN_SIMILARITY
 
     def test_empty_matches_return_none(self, monkeypatch):
         _patch_retriever(monkeypatch, [])

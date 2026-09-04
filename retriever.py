@@ -17,6 +17,7 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 # Gemini embeddings default to 3072 dims; pin 768 to match the pgvector column.
 OUTPUT_DIMENSIONALITY = 768
 DEFAULT_MATCH_COUNT = 4
+MIN_SIMILARITY = 0.45
 
 _genai_client = None
 
@@ -107,7 +108,14 @@ def _embed_query(query: str) -> list[float]:
 def _match_chunks(embedding: list[float], k: int) -> list[dict]:
     response = (
         _client()
-        .rpc("match_knowledge_chunks", {"query_embedding": embedding, "match_count": k})
+        .rpc(
+            "match_knowledge_chunks",
+            {
+                "query_embedding": embedding,
+                "match_count": k,
+                "min_similarity": MIN_SIMILARITY,
+            },
+        )
         .execute()
     )
     return response.data or []

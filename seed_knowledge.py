@@ -4,9 +4,8 @@ Reads the markdown policy docs, splits them under their headings into
 (gemini-embedding-001 pinned to 768 dimensions) and upserts documents +
 chunks.
 
-Ingestion is atomic per document: the content_hash that gates the "unchanged"
-skip is written only AFTER its chunks are inserted, so a crash mid-document
-can never leave a doc marked complete.
+Ingestion is atomic per document. Embeddings are prepared locally, then a
+single database RPC replaces metadata and chunks in one transaction.
 
 Examples:
     python seed_knowledge.py                 # ingest new/changed docs
@@ -28,42 +27,72 @@ from retriever import embed_texts
 
 
 MAX_CHARS = 600
-MIN_MERGED_CHARS = 80
+OVERLAP_CHARS = 120
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 
+def _tail_for_overlap(text: str) -> str:
+    """Return a word-boundary tail small enough to carry into the next chunk."""
+    if len(text) <= OVERLAP_CHARS:
+        return text
+    tail = text[-OVERLAP_CHARS:]
+    boundary = tail.find(" ")
+    return tail[boundary + 1:] if boundary >= 0 else tail
+
+
+def _split_long_paragraph(paragraph: str) -> list[str]:
+    """Split an oversized paragraph without cutting words where possible."""
+    pieces = []
+    remaining = paragraph.strip()
+    while len(remaining) > MAX_CHARS:
+        boundary = remaining.rfind(" ", 0, MAX_CHARS + 1)
+        if boundary <= 0:
+            boundary = MAX_CHARS
+        pieces.append(remaining[:boundary].strip())
+        remaining = remaining[boundary:].strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
+
+
 def chunk_markdown(text: str) -> list[tuple[str | None, str]]:
-    """Split markdown under headings into chunks of at most MAX_CHARS.
+    """Split Markdown by heading and paragraph with overlap between chunks."""
+    sections: list[tuple[str | None, list[str]]] = []
+    heading: str | None = None
+    lines: list[str] = []
 
-    Returns (heading, body) tuples in document order; headingless preamble
-    chunks use None.
-    """
-    chunks: list[tuple[str | None, str]] = []
-    current_heading: str | None = None
-    buffer: list[str] = []
-
-    def flush() -> None:
-        body = "\n".join(buffer).strip()
+    def finish_section() -> None:
+        body = "\n".join(lines).strip()
         if body:
-            if chunks and len(body) < MIN_MERGED_CHARS:
-                prev_heading, prev_body = chunks[-1]
-                glue = "" if prev_body.endswith("\n") else "\n\n"
-                chunks[-1] = (prev_heading, f"{prev_body}{glue}{body}")
-            else:
-                chunks.append((current_heading, body))
+            sections.append((heading, [part.strip() for part in re.split(r"\n\s*\n+", body) if part.strip()]))
 
     for line in text.splitlines():
         match = HEADING_RE.match(line.strip())
         if match:
-            flush()
-            buffer = []
-            current_heading = match.group(2).strip()
+            finish_section()
+            lines = []
+            heading = match.group(2).strip()
         else:
-            buffer.append(line)
-            if sum(len(part) + 1 for part in buffer) >= MAX_CHARS:
-                flush()
-                buffer = []
-    flush()
+            lines.append(line)
+    finish_section()
+
+    chunks: list[tuple[str | None, str]] = []
+    for section_heading, paragraphs in sections:
+        buffer = ""
+        for paragraph in paragraphs:
+            for part in _split_long_paragraph(paragraph):
+                candidate = f"{buffer}\n\n{part}".strip() if buffer else part
+                if buffer and len(candidate) > MAX_CHARS:
+                    chunks.append((section_heading, buffer))
+                    overlap = _tail_for_overlap(buffer)
+                    with_overlap = f"{overlap}\n\n{part}".strip()
+                    # A large following paragraph may leave no room for the
+                    # overlap; preserve the size guarantee in that case.
+                    buffer = with_overlap if len(with_overlap) <= MAX_CHARS else part
+                else:
+                    buffer = candidate
+        if buffer:
+            chunks.append((section_heading, buffer))
     return chunks
 
 
@@ -96,7 +125,9 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
         # replaces the document metadata and chunks in one transaction.
         chunks = chunk_markdown(text)
 
-        contents = [body for _, body in chunks]
+        # Embed title and heading with each body so retrieval retains the
+        # document context even when body language is generic.
+        contents = [f"{title}\n{heading or ''}\n{body}".strip() for heading, body in chunks]
         vectors = embed_texts(contents) if contents else []
         rows = [
             {

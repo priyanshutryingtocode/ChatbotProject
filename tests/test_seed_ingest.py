@@ -23,6 +23,28 @@ MD = (
 )
 
 
+class TestChunkMarkdown:
+    def test_keeps_heading_and_paragraph_boundary(self):
+        first = "first " * 55
+        second = "second " * 55
+        chunks = seed_knowledge.chunk_markdown(f"# Policy\n## Window\n{first}\n\n{second}")
+
+        assert len(chunks) == 2
+        assert all(heading == "Window" for heading, _ in chunks)
+        assert all(len(body) <= seed_knowledge.MAX_CHARS for _, body in chunks)
+        assert "first" in chunks[0][1]
+        assert "first" in chunks[1][1]  # overlap retains preceding context
+        assert "second" in chunks[1][1]
+
+    def test_splits_oversized_paragraph_without_losing_text(self):
+        text = "# Policy\n" + ("word " * 200)
+        chunks = seed_knowledge.chunk_markdown(text)
+
+        assert len(chunks) > 1
+        assert all(len(body) <= seed_knowledge.MAX_CHARS for _, body in chunks)
+        assert " ".join(body for _, body in chunks).count("word") >= 200
+
+
 class _Resp:
     def __init__(self, data):
         self.data = data
