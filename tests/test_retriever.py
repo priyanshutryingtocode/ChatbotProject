@@ -57,6 +57,11 @@ class TestRetrievePolicies:
         _patch_retriever(monkeypatch, [])
         assert retriever.retrieve_policies("anything") is None
 
+    def test_returns_raw_score_qualified_matches_for_evaluation(self, monkeypatch):
+        rows = [{"doc_title": "Returns Policy", "similarity": 0.72}]
+        _patch_retriever(monkeypatch, rows)
+        assert retriever.retrieve_policy_matches("return window") == rows
+
     def test_client_error_returns_none_not_raised(self, monkeypatch):
         def broken_client():
             raise RuntimeError("connection refused")

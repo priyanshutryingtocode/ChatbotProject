@@ -6,9 +6,9 @@ Standard delivery takes 2–7 business days from dispatch depending on your
 pincode. Metro cities are usually served in 2–3 days; remote pincodes can take
 the full week.
 
-## Carriers
+## Carriers and Courier Companies
 
-We ship with Delhivery, Blue Dart, DTDC, Ecom Express, and XpressBees. The
+Courier company and carrier mean the same thing in this policy. We ship with Delhivery, Blue Dart, DTDC, Ecom Express, and XpressBees. The
 carrier assigned depends on your pincode and is shown on the shipment details
 alongside a tracking number.
 

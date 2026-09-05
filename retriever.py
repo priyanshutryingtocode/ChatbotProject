@@ -17,7 +17,7 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 # Gemini embeddings default to 3072 dims; pin 768 to match the pgvector column.
 OUTPUT_DIMENSIONALITY = 768
 DEFAULT_MATCH_COUNT = 4
-MIN_SIMILARITY = 0.45
+MIN_SIMILARITY = 0.6
 
 _genai_client = None
 
@@ -133,15 +133,19 @@ def format_policy_context(matches: list[dict]) -> str | None:
     return "\n\n".join(blocks)
 
 
-def retrieve_policies(query: str, k: int = DEFAULT_MATCH_COUNT) -> str | None:
-    """Return formatted policy excerpts for a question, or None when nothing useful is found."""
+def retrieve_policy_matches(query: str, k: int = DEFAULT_MATCH_COUNT) -> list[dict]:
+    """Return score-qualified policy matches, or an empty list on no match/error."""
     cleaned = (query or "").strip()
     if not cleaned:
-        return None
+        return []
     try:
         embedding = _embed_query(cleaned)
-        matches = _match_chunks(embedding, k)
+        return _match_chunks(embedding, k)
     except Exception:
         logger.exception("Policy retrieval failed")
-        return None
-    return format_policy_context(matches)
+        return []
+
+
+def retrieve_policies(query: str, k: int = DEFAULT_MATCH_COUNT) -> str | None:
+    """Return formatted policy excerpts for a question, or None when nothing useful is found."""
+    return format_policy_context(retrieve_policy_matches(query, k))
