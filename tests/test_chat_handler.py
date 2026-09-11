@@ -1,6 +1,5 @@
-from unittest.mock import MagicMock
-
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
@@ -63,9 +62,7 @@ class TestTwoFieldVerificationFlow:
         monkeypatch.setattr(chat_handler, "find_orders", lambda criteria, require_order_id=True: [sample_order])
         handler = OrderChatHandler()
 
-        response, db_results = handler.process_user_message(
-            "check order 42, email jane@example.com"
-        )
+        response, db_results = handler.process_user_message("check order 42, email jane@example.com")
 
         assert db_results == {"matched": [sample_order]}
         assert "Order #0042" in response
@@ -93,13 +90,41 @@ class TestTwoFieldVerificationFlow:
         monkeypatch.setattr(chat_handler, "find_orders", lambda criteria, require_order_id=True: [])
         handler = OrderChatHandler()
 
-        response, db_results = handler.process_user_message(
-            "order 42, email nobody@example.com"
-        )
+        response, db_results = handler.process_user_message("order 42, email nobody@example.com")
 
         assert db_results == {}
         assert "couldn't find" in response.lower()
         assert handler.pending_identity == {}
+
+    def test_five_failed_verifications_start_a_session_cooldown(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            chat_handler,
+            "find_orders",
+            lambda criteria, require_order_id=True: calls.append(criteria) or [],
+        )
+        handler = OrderChatHandler()
+
+        for _ in range(5):
+            response, _ = handler.process_user_message("order 42, email wrong@example.com")
+
+        assert "too many" in response.lower()
+        assert len(calls) == 5
+
+        response, _ = handler.process_user_message("order 42, email wrong@example.com")
+        assert "too many" in response.lower()
+        assert len(calls) == 5
+
+    def test_name_only_verification_hides_sensitive_follow_up_details(self, monkeypatch, sample_order):
+        monkeypatch.setattr(chat_handler, "find_orders", lambda criteria, require_order_id=True: [sample_order])
+        handler = OrderChatHandler()
+
+        response, _ = handler.process_user_message("order 42, name is Jane Doe")
+        assert "Tracking number" not in response
+
+        response, _ = handler.process_user_message("what is my payment status?")
+        assert "privacy" in response.lower()
+        assert "Paid" not in response
 
     def test_cancel_mid_verification_resets_state(self):
         handler = OrderChatHandler()
@@ -197,7 +222,9 @@ class TestPolicyQuestions:
         monkeypatch.setattr(chat_handler, "search_policy", policy_tool)
         _scripted_tool_llm(
             monkeypatch,
-            first_calls=[{"name": "search_policy", "args": {"question": "how can i get a refund"}, "id": "refund-policy"}],
+            first_calls=[
+                {"name": "search_policy", "args": {"question": "how can i get a refund"}, "id": "refund-policy"}
+            ],
             final_text="Per our Refunds Policy, refunds go to the original payment method.",
         )
         handler = OrderChatHandler()
@@ -250,8 +277,17 @@ class TestPolicyQuestions:
         # tools together.
         monkeypatch.setattr(tools_namespace, "find_orders", lambda criteria, require_order_id=True: [])
         monkeypatch.setattr(
-            chat_handler, "search_policy",
-            type("S", (), {"invoke": staticmethod(lambda args: json.dumps({"status": "found", "context": "[source: Returns]\n30-day window."}))})(),
+            chat_handler,
+            "search_policy",
+            type(
+                "S",
+                (),
+                {
+                    "invoke": staticmethod(
+                        lambda args: json.dumps({"status": "found", "context": "[source: Returns]\n30-day window."})
+                    )
+                },
+            )(),
         )
         scripted = _scripted_tool_llm(
             monkeypatch,
@@ -278,7 +314,8 @@ class TestStreamingResponse:
     def test_streamed_generator_yields_deltas_and_persists_once(self, monkeypatch):
         handler = OrderChatHandler()
         monkeypatch.setattr(
-            handler, "_route_message",
+            handler,
+            "_route_message",
             lambda ui, stream=False, on_step=None: (iter(["Hel", "lo"]), {}),
         )
 
@@ -334,10 +371,14 @@ class TestStreamingResponse:
         handler.llm.invoke.assert_not_called()
 
     def test_tool_loop_final_answer_streams(self, monkeypatch, sample_order):
-        first = AIMessage(content="", tool_calls=[{"name": "search_policy", "args": {"question": "returns"}, "id": "t9"}])
+        first = AIMessage(
+            content="", tool_calls=[{"name": "search_policy", "args": {"question": "returns"}, "id": "t9"}]
+        )
         scripted = MagicMock()
         scripted.invoke.return_value = first
-        scripted.stream.return_value = iter([AIMessageChunk(content="Per our "), AIMessageChunk(content="Returns policy.")])
+        scripted.stream.return_value = iter(
+            [AIMessageChunk(content="Per our "), AIMessageChunk(content="Returns policy.")]
+        )
         monkeypatch.setattr(chat_handler, "build_llm_with_tools", lambda: scripted)
 
         policy_stub = MagicMock()

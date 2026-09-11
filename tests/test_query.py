@@ -1,4 +1,5 @@
 """Tests for query.py."""
+
 import query
 
 

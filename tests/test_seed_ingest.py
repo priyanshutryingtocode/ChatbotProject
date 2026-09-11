@@ -11,7 +11,6 @@ import pytest
 
 import seed_knowledge
 
-
 MD = (
     "# Returns Policy\n"
     "\n"
@@ -136,15 +135,14 @@ class _RPC:
             row = {"id": client._next_id, "title": title}
             client._next_id += 1
             documents[title] = row
-        row.update({
-            "source_file": self._params["p_source_file"],
-            "content_hash": self._params["p_content_hash"],
-        })
+        row.update(
+            {
+                "source_file": self._params["p_source_file"],
+                "content_hash": self._params["p_content_hash"],
+            }
+        )
         document_id = row["id"]
-        chunks[document_id] = [
-            {"document_id": document_id, **chunk}
-            for chunk in self._params["p_chunks"]
-        ]
+        chunks[document_id] = [{"document_id": document_id, **chunk} for chunk in self._params["p_chunks"]]
         client.documents = documents
         client.chunks = chunks
         client.log.append(("rpc", self._name, deepcopy(self._params)))
@@ -209,9 +207,7 @@ class TestIngestUnchanged:
         }
         prechunks = {5: [{"document_id": 5, "chunk_index": 0, "stale": True}]}
 
-        client, summary, _ = _run(
-            monkeypatch, tmp_path, reingest=False, preexisting=preexisting, prechunks=prechunks
-        )
+        client, summary, _ = _run(monkeypatch, tmp_path, reingest=False, preexisting=preexisting, prechunks=prechunks)
 
         assert summary == (0, 0)
         # Only the existence check ran — no insert/update/delete anywhere.
@@ -233,9 +229,7 @@ class TestIngestReingest:
         }
         prechunks = {5: [{"document_id": 5, "chunk_index": 0, "stale": True}]}
 
-        client, summary, _ = _run(
-            monkeypatch, tmp_path, reingest=True, preexisting=preexisting, prechunks=prechunks
-        )
+        client, summary, _ = _run(monkeypatch, tmp_path, reingest=True, preexisting=preexisting, prechunks=prechunks)
 
         assert summary[0] == 1
         rows = client.chunks[5]
@@ -249,7 +243,6 @@ class TestIngestAtomicity:
         # Built inline (not via _run) so the client exists independently of
         # the expected ingest failure.
         (tmp_path / "returns.md").write_text(MD, encoding="utf-8")
-        digest = seed_knowledge.file_hash(tmp_path / "returns.md")
         client = _FakeClient()
         client.fail_on_replace = True
         monkeypatch.setattr(seed_knowledge, "embed_texts", lambda texts: [[0.25] * 768 for _ in texts])

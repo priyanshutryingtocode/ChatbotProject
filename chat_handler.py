@@ -6,6 +6,7 @@ import time
 from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate
 
+from conversation.state import VerificationAttemptGuard, VerificationState
 from database import (
     append_message,
     create_conversation,
@@ -191,8 +192,9 @@ class OrderChatHandler:
         self.llm_with_tools = build_llm_with_tools()
         self.conversation_history = []
         self.last_db_results = None
-        # Identity fields supplied across messages, collected toward a verified lookup.
-        self.pending_identity = {}
+        self.verification = VerificationState()
+        self.verification_guard = VerificationAttemptGuard()
+        self.name_only_verified_order_ids: set[int] = set()
         self.conversation_id = conversation_id
         self.last_message_ids: dict[str, str] = {}
 
@@ -205,6 +207,11 @@ class OrderChatHandler:
                 ]
             except Exception:
                 logger.exception("Failed to load conversation history")
+
+    @property
+    def pending_identity(self) -> dict[str, str]:
+        """Compatibility view for UI/tests; state mutations stay explicit."""
+        return self.verification.as_criteria()
 
     def process_user_message(self, user_input):
         if not user_input or not user_input.strip():
@@ -288,7 +295,7 @@ class OrderChatHandler:
         extracted = extract_info_from_query(user_input)
 
         # While awaiting an order number, a bare standalone number is the order.
-        if not extracted["order_ids"] and self.pending_identity and not self.pending_identity.get("order_id"):
+        if not extracted["order_ids"] and self.verification.has_any and not self.verification.order_id:
             bare_match = re.search(r"\b(\d{1,4})\b", user_input)
             if bare_match:
                 candidate = int(bare_match.group(1))
@@ -299,10 +306,10 @@ class OrderChatHandler:
         # is the customer's name.
         if (
             not any(extracted.values())
-            and self.pending_identity.get("order_id")
-            and not self.pending_identity.get("email")
-            and not self.pending_identity.get("phone")
-            and not self.pending_identity.get("name")
+            and self.verification.order_id
+            and not self.verification.email
+            and not self.verification.phone
+            and not self.verification.name
             and _looks_like_bare_name(user_input)
         ):
             extracted["names"] = [user_input.strip().strip(".,;:!?")]
@@ -328,23 +335,19 @@ class OrderChatHandler:
         # Let the user bail out of a half-finished verification. An explicit
         # policy question instead interrupts collection to answer, keeping the
         # collected identity so verification can resume afterwards.
-        if self.pending_identity:
+        if self.verification.has_any:
             lowered = user_input.lower()
             if _looks_like_bare_cancel(lowered) or re.search(
                 r"\b(?:never\s*mind|forget\s*(?:it|that)|skip|nothing)\b", lowered
             ):
-                self.pending_identity = {}
+                self.verification.reset()
                 response = "No problem - we can start over whenever you're ready. To check an order I'll need your order number plus your email, phone number, or name."
                 self.conversation_history.append(("assistant", response))
                 return response, {}
 
         self._merge_pending_identity(extracted)
-        has_order = self.pending_identity.get("order_id") is not None
-        has_secondary = bool(
-            self.pending_identity.get("email")
-            or self.pending_identity.get("phone")
-            or self.pending_identity.get("name")
-        )
+        has_order = self.verification.order_id is not None
+        has_secondary = self.verification.has_secondary
 
         # Order number plus a second identity field: run the verified lookup now.
         if has_order and has_secondary:
@@ -353,7 +356,7 @@ class OrderChatHandler:
         # Verification in progress (or identity info just supplied): stay
         # deterministic and collect the missing detail. The free-form model is
         # never used mid-verification, so it cannot invent order data.
-        if self.pending_identity:
+        if self.verification.has_any:
             response = self._ask_for_missing_field()
             self.conversation_history.append(("assistant", response))
             return response, {}
@@ -372,48 +375,38 @@ class OrderChatHandler:
         Returns True if any field was added or changed. A new, different order
         number invalidates previously gathered secondary fields.
         """
-        changed = False
-        if extracted["order_ids"]:
-            new_order_id = extracted["order_ids"][0]
-            if self.pending_identity.get("order_id") != new_order_id:
-                if self.pending_identity.get("order_id") is not None:
-                    self.pending_identity = {}
-                self.pending_identity["order_id"] = new_order_id
-                changed = True
-        if extracted["emails"]:
-            email = extracted["emails"][0]
-            if self.pending_identity.get("email") != email:
-                self.pending_identity["email"] = email
-                changed = True
-        if extracted["phones"]:
-            phone = extracted["phones"][0]
-            if self.pending_identity.get("phone") != phone:
-                self.pending_identity["phone"] = phone
-                changed = True
-        if extracted["names"]:
-            name = extracted["names"][0]
-            if self.pending_identity.get("name") != name:
-                self.pending_identity["name"] = name
-                changed = True
-        return changed
+        return self.verification.merge(extracted)
 
     def _run_verified_lookup(self):
         """Look up orders only when every collected field matches the same order."""
         try:
-            orders = find_orders(self.pending_identity, require_order_id=True)
+            if self.verification_guard.locked:
+                self.verification.reset()
+                response = "Too many unsuccessful verification attempts. Please wait a few minutes before trying again."
+                self.conversation_history.append(("assistant", response))
+                return response, {}
+            orders = find_orders(self.verification.as_criteria(), require_order_id=True)
         except ValueError:
             orders = []
 
         if not orders:
-            self.pending_identity = {}
+            locked = self.verification_guard.record_failure()
+            self.verification.reset()
+            if locked:
+                response = "Too many unsuccessful verification attempts. Please wait a few minutes before trying again."
+                self.conversation_history.append(("assistant", response))
+                return response, {}
             response = "I couldn't find an order matching that information. Please check the order number or customer details and try again."
             self.conversation_history.append(("assistant", response))
             return response, {}
 
         db_results = {"matched": orders}
         self.last_db_results = db_results
-        self.pending_identity = {}
-        response = self._format_grounded_lookup(db_results)
+        name_only = self.verification.name_only
+        self.verification_guard.record_success()
+        self.verification.reset()
+        self.name_only_verified_order_ids = {int(order["public_order_id"]) for order in orders} if name_only else set()
+        response = self._format_grounded_lookup(db_results, name_only=name_only)
         self.conversation_history.append(("assistant", response))
         return response, db_results
 
@@ -503,11 +496,16 @@ class OrderChatHandler:
             db_results = {"matched": orders} if orders else {}
             if db_results:
                 self.last_db_results = db_results
-                self.pending_identity = {}
+                name_only = bool(criteria.get("name") and not criteria.get("email") and not criteria.get("phone"))
+                self.name_only_verified_order_ids = (
+                    {int(order["public_order_id"]) for order in orders} if name_only else set()
+                )
+                self.verification_guard.record_success()
+                self.verification.reset()
         elif payload.get("status") == "need_more_info":
-            self.pending_identity = self._criteria_from_args(args)
+            self.verification = VerificationState.from_criteria(self._criteria_from_args(args))
         else:  # not_found / error
-            self.pending_identity = {}
+            self.verification.reset()
         return payload
 
     @staticmethod
@@ -522,16 +520,15 @@ class OrderChatHandler:
 
     def _ask_for_missing_field(self) -> str:
         """Explain which identity field is still needed to complete a lookup."""
-        pending = self.pending_identity
-        if pending.get("order_id"):
+        if self.verification.order_id:
             return (
-                f"I have your order number (#{format_order_number(pending['order_id'])}). "
+                f"I have your order number (#{format_order_number(self.verification.order_id)}). "
                 "To verify it, please also provide the email, phone number, or name on the order."
             )
         have = [
             label
             for label, key in (("email", "email"), ("phone number", "phone"), ("name", "name"))
-            if pending.get(key)
+            if getattr(self.verification, key)
         ]
         return (
             f"I have your {', '.join(have)}. To verify your order, I also need your order number - "
@@ -562,7 +559,12 @@ class OrderChatHandler:
     def _build_message_list(self, user_input):
         """System prompt (with query-relevant order data) + history + current message."""
         if self.last_db_results:
-            context = format_database_context(self.last_db_results, query=user_input)
+            name_only = bool(self.name_only_verified_order_ids)
+            context = format_database_context(
+                self.last_db_results,
+                fields={"order", "status", "delivery"} if name_only else None,
+                query=None if name_only else user_input,
+            )
             system_prompt = (
                 f"{SYSTEM_PROMPT}\n\n{context}\n\n"
                 "Please use the above order information to provide accurate and helpful responses. "
@@ -645,7 +647,8 @@ class OrderChatHandler:
     def clear_context(self):
         self.conversation_history = []
         self.last_db_results = None
-        self.pending_identity = {}
+        self.verification.reset()
+        self.name_only_verified_order_ids = set()
         self.last_message_ids = {}
 
     def _verified_order_ids(self) -> set[int]:
@@ -671,7 +674,7 @@ class OrderChatHandler:
         return self.last_db_results if self.last_db_results else None
 
     @staticmethod
-    def _format_grounded_lookup(db_results):
+    def _format_grounded_lookup(db_results, name_only: bool = False):
         """Create an exact database-backed response for a new identity lookup."""
         orders = []
         for value in db_results.values():
@@ -692,7 +695,7 @@ class OrderChatHandler:
             lines.append(f"Estimated delivery: **{format_timestamp(shipment['estimated_delivery_at'])}**.")
         if shipment.get("delivered_at"):
             lines.append(f"Delivered: **{format_timestamp(shipment['delivered_at'])}**.")
-        if shipment.get("tracking_number"):
+        if shipment.get("tracking_number") and not name_only:
             lines.append(f"Tracking number: `{shipment['tracking_number']}`.")
         return "\n\n".join(lines)
 
@@ -711,6 +714,13 @@ class OrderChatHandler:
         shipment = (order.get("shipments") or [{}])[0]
         message = user_input.lower()
         order_number = format_order_number(order.get("public_order_id"))
+        name_only = order.get("public_order_id") in self.name_only_verified_order_ids
+
+        if name_only and any(word in message for word in ("driver", "track", "payment", "paid", "refund", "item")):
+            return (
+                "For privacy, name-only verification can show order status and delivery timing only. "
+                "Please provide the email address or phone number on the order for additional details."
+            )
 
         if "driver" in message:
             driver = shipment.get("delivery_driver_name")

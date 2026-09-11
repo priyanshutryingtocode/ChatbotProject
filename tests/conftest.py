@@ -6,6 +6,7 @@ is collected before test modules, so setting them here (at module import
 time, before the first `import database`/`import query` in any test file)
 is early enough.
 """
+
 import os
 
 os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key")
@@ -49,9 +50,7 @@ def sample_order():
                 "delivery_time_slot": "9am-5pm",
             }
         ],
-        "order_events": [
-            {"event_type": "dispatched", "event_at": "2026-08-02T09:00:00Z", "message": "Left warehouse"}
-        ],
+        "order_events": [{"event_type": "dispatched", "event_at": "2026-08-02T09:00:00Z", "message": "Left warehouse"}],
     }
 
 

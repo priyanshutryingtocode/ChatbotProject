@@ -51,16 +51,22 @@ def lookup_order(
         return json.dumps({"status": "not_found"})
 
     db_results = {"matched": orders}
+    name_only = bool(criteria.get("name") and not criteria.get("email") and not criteria.get("phone"))
     selected = normalize_field_keys(fields) if fields else set()
+    if name_only:
+        # A name is a lower-confidence verifier. Tool enforcement remains
+        # server-side, so an LLM cannot request payment or contact details.
+        selected = {"order", "status", "delivery"}
     context = format_database_context(db_results, fields=selected if selected else None)
 
     summary_fields = ["public_order_id", "status"]
-    if not selected or "payment" in selected:
+    if not name_only and (not selected or "payment" in selected):
         summary_fields += ["payment_status", "total_amount", "currency"]
 
     return json.dumps(
         {
             "status": "found",
+            "verification_level": "name_limited" if name_only else "strong",
             "orders": [{key: order.get(key) for key in summary_fields} for order in orders],
             "context": context,
         }

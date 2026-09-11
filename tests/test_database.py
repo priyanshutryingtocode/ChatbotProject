@@ -2,10 +2,10 @@ import pytest
 
 import database
 
-
 # ---------------------------------------------------------------------------
 # Pure formatters — no mocking needed
 # ---------------------------------------------------------------------------
+
 
 class TestFormatOrderNumber:
     def test_pads_to_four_digits(self):
@@ -57,6 +57,7 @@ class TestFormatOrderForDisplay:
 # per-field lookup functions)
 # ---------------------------------------------------------------------------
 
+
 class TestFindOrdersValidation:
     def test_requires_order_id_by_default(self):
         with pytest.raises(ValueError):
@@ -100,6 +101,7 @@ class TestFindOrdersMatching:
 # than Supabase's actual server-side filtering (that belongs in an
 # integration test against a real/test Supabase project).
 # ---------------------------------------------------------------------------
+
 
 class _FakeResponse:
     def __init__(self, data):
