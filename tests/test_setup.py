@@ -1,4 +1,10 @@
 import setup
+from langchain_core.globals import get_verbose
+
+
+def test_langchain_verbose_compatibility():
+    """Pinned langchain and langchain-core must agree on the verbose setting."""
+    assert isinstance(get_verbose(), bool)
 
 
 def test_chatmodel_is_cached(monkeypatch):

@@ -1,6 +1,7 @@
 # Runtime dependencies. Versions are pinned from the working Python 3.12 environment.
 Faker==40.36.0
 google-genai==2.19.0
+langchain==0.3.25
 langchain-core==0.3.75
 langchain-google-genai==2.1.10
 python-dotenv==1.1.0
