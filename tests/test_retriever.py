@@ -32,7 +32,17 @@ def _patch_retriever(monkeypatch, rows, embed_vector=None):
 
 class TestRetrievePolicies:
     def test_formats_sources_and_content(self, monkeypatch):
-        _patch_retriever(monkeypatch, [{"doc_title": "Refunds", "heading": "Refund timelines", "content": " Refunds take 5-7 days. ", "similarity": 0.91}])
+        _patch_retriever(
+            monkeypatch,
+            [
+                {
+                    "doc_title": "Refunds",
+                    "heading": "Refund timelines",
+                    "content": " Refunds take 5-7 days. ",
+                    "similarity": 0.91,
+                }
+            ],
+        )
         result = retriever.retrieve_policies("how long do refunds take")
         assert "[source: Refunds > Refund timelines]" in result
         assert "Refunds take 5-7 days." in result
@@ -85,7 +95,10 @@ class TestFormatPolicyContext:
         assert retriever.format_policy_context([]) is None
 
     def test_multiple_matches_joined_with_blank_lines(self):
-        matches = [{"doc_title": "A", "heading": "One", "content": "alpha"}, {"doc_title": "B", "heading": None, "content": "beta"}]
+        matches = [
+            {"doc_title": "A", "heading": "One", "content": "alpha"},
+            {"doc_title": "B", "heading": None, "content": "beta"},
+        ]
         result = retriever.format_policy_context(matches)
         assert "[source: A > One]" in result and "alpha" in result
         assert "[source: B]" in result and "beta" in result
@@ -108,3 +121,15 @@ class TestFitDimensions:
 
     def test_empty_input_ok(self):
         assert retriever.fit_dimensions([]) == []
+
+
+def test_query_embeddings_are_normalized_and_cached(monkeypatch):
+    calls = []
+    monkeypatch.setattr(retriever, "embed_texts", lambda texts: calls.append(texts) or [[0.5] * 768])
+    retriever._cached_query_embedding.cache_clear()
+
+    first = retriever._embed_query("  Refund   Policy  ")
+    second = retriever._embed_query("refund policy")
+
+    assert first == second == [0.5] * 768
+    assert calls == [["refund policy"]]

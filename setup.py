@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -49,7 +50,9 @@ Order Status Meanings:
 - Failed Delivery: Delivery attempt unsuccessful"""
 
 
-def chatmodel():
+@lru_cache(maxsize=1)
+def _chatmodel_resource() -> ChatGoogleGenerativeAI:
+    """Create one shared Gemini chat wrapper for this server process."""
     return ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=GEMINI_API_KEY,
@@ -57,8 +60,19 @@ def chatmodel():
     )
 
 
+def chatmodel() -> ChatGoogleGenerativeAI:
+    """Return the process-wide chat model; conversation state remains separate."""
+    return _chatmodel_resource()
+
+
+@lru_cache(maxsize=1)
 def supabase_server_client() -> Client:
-    """Create a server-only Supabase client for the internal support workspace."""
+    """Return one server-only Supabase client for this process.
+
+    This cache is deliberately process-scoped, not session-scoped. The client
+    contains connection configuration only; customer/order state is never held
+    here.
+    """
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise RuntimeError(
             "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for database access. "

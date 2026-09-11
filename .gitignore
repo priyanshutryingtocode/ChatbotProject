@@ -7,5 +7,3 @@
 __pycache__
 .pytest_cache
 /knowledge
-/tests
-/supabase

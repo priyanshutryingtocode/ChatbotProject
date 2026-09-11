@@ -8,6 +8,7 @@ a no-match answer instead of raising into the chat flow.
 """
 
 import logging
+from functools import lru_cache
 
 from setup import GEMINI_API_KEY, supabase_server_client
 
@@ -19,21 +20,17 @@ OUTPUT_DIMENSIONALITY = 768
 DEFAULT_MATCH_COUNT = 4
 MIN_SIMILARITY = 0.6
 
-_genai_client = None
-
 
 def _client():
     return supabase_server_client()
 
 
+@lru_cache(maxsize=1)
 def _get_genai_client():
     """Lazily build the google-genai client shared by every embed call."""
-    global _genai_client
-    if _genai_client is None:
-        from google import genai
+    from google import genai
 
-        _genai_client = genai.Client(api_key=GEMINI_API_KEY)
-    return _genai_client
+    return genai.Client(api_key=GEMINI_API_KEY)
 
 
 def fit_dimensions(vectors: list[list[float]]) -> list[list[float]]:
@@ -99,8 +96,21 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     return fit_dimensions(vectors)
 
 
+def _normalize_query(query: str) -> str:
+    """Normalize public policy queries before using them as cache keys."""
+    return " ".join(query.split()).casefold()
+
+
+@lru_cache(maxsize=512)
+def _cached_query_embedding(query: str, model: str, dimensions: int) -> tuple[float, ...]:
+    """Cache bounded, normalized query embeddings by model configuration."""
+    del model, dimensions  # Included in the key so future configuration changes bypass stale entries.
+    return tuple(embed_texts([query])[0])
+
+
 def _embed_query(query: str) -> list[float]:
-    return embed_texts([query])[0]
+    normalized = _normalize_query(query)
+    return list(_cached_query_embedding(normalized, EMBEDDING_MODEL, OUTPUT_DIMENSIONALITY))
 
 
 def _match_chunks(embedding: list[float], k: int) -> list[dict]:
