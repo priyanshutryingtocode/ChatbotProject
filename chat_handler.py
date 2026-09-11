@@ -63,6 +63,15 @@ POLICY_PHRASES = (
     re.compile(r"\breturn\s+(?:my|the|an)?\s*(?:order|item)\b"),
 )
 
+# A refund can be either a public-policy question or a request for the status
+# of a particular verified order. Keep only clear status wording in the latter
+# category; requests to get a refund should go to the policy retriever.
+_ORDER_REFUND_STATUS_RE = re.compile(
+    r"\b(?:refund\s+(?:status|is|was|has|been|pending|processed|received|arrived)|"
+    r"(?:status|when|where)\s+(?:is\s+)?(?:my\s+)?refund|my\s+refund)\b",
+    re.IGNORECASE,
+)
+
 # Words that are clearly conversational filler rather than a bare name.
 BARE_NAME_STOPWORDS = {
     "hello", "hi", "hey", "thanks", "thank", "thank you", "yes", "yep", "yeah",
@@ -225,6 +234,12 @@ class OrderChatHandler:
         ):
             extracted["names"] = [user_input.strip().strip(".,;:!?")]
 
+        # Public-policy questions take precedence over stored order context.
+        # Without this branch, a previous order lookup makes a broad request
+        # such as "how can I get a refund?" look like a payment-status follow-up.
+        if self._is_policy_question(user_input) and not self._is_order_specific_refund_question(user_input):
+            return self._run_tool_lookup(user_input, stream=stream, on_step=on_step)
+
         # A message that only re-references the already-verified order is a
         # follow-up, not a new lookup, so it can keep using stored context.
         verified_ids = self._verified_order_ids()
@@ -244,8 +259,6 @@ class OrderChatHandler:
                 response = "No problem - we can start over whenever you're ready. To check an order I'll need your order number plus your email, phone number, or name."
                 self.conversation_history.append(("assistant", response))
                 return response, {}
-            if self._is_policy_question(user_input):
-                return self._run_tool_lookup(user_input, stream=stream, on_step=on_step)
 
         self._merge_pending_identity(extracted)
         has_order = self.pending_identity.get("order_id") is not None
@@ -455,6 +468,10 @@ class OrderChatHandler:
             return True
         return any(pattern.search(message) for pattern in POLICY_PHRASES)
 
+    def _is_order_specific_refund_question(self, user_input: str) -> bool:
+        """Whether refund wording clearly asks for the verified order's status."""
+        return bool(self.last_db_results and _ORDER_REFUND_STATUS_RE.search(user_input))
+
     def _two_field_prompt(self) -> str:
         return (
             "I need two details to verify your order before I can share anything: "
@@ -635,6 +652,8 @@ class OrderChatHandler:
             if estimated:
                 return f"The estimated delivery for order #{order_number} is **{format_timestamp(estimated)}**."
             return f"There is no delivery estimate available yet for order #{order_number}."
+        if _ORDER_REFUND_STATUS_RE.search(user_input):
+            return f"Payment status for order #{order_number}: **{order.get('payment_status', 'Unknown')}**."
         if any(word in message for word in ("status", "where is", "where's")):
             status = order.get("status", "Unknown")
             return f"Order #{order_number} is currently **{status}**. {STATUS_EXPLANATIONS.get(status, '')}".strip()

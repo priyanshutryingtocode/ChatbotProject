@@ -189,6 +189,34 @@ class TestPolicyQuestions:
         # Plain LLM (non-tool) path never used.
         handler.llm.invoke.assert_not_called()
 
+    def test_refund_policy_overrides_verified_order_context(self, monkeypatch, sample_order):
+        policy_tool = MagicMock()
+        policy_tool.invoke.return_value = json.dumps(
+            {"status": "found", "context": "[source: Refunds Policy]\nRefund method details."}
+        )
+        monkeypatch.setattr(chat_handler, "search_policy", policy_tool)
+        _scripted_tool_llm(
+            monkeypatch,
+            first_calls=[{"name": "search_policy", "args": {"question": "how can i get a refund"}, "id": "refund-policy"}],
+            final_text="Per our Refunds Policy, refunds go to the original payment method.",
+        )
+        handler = OrderChatHandler()
+        handler.last_db_results = {"matched": [sample_order]}
+
+        response, _ = handler.process_user_message("how can I get a refund?")
+
+        assert "original payment method" in response
+        policy_tool.invoke.assert_called_once_with({"question": "how can i get a refund"})
+
+    def test_refund_status_remains_order_specific_follow_up(self, sample_order):
+        handler = OrderChatHandler()
+        handler.last_db_results = {"matched": [sample_order]}
+
+        response, _ = handler.process_user_message("what is my refund status?")
+
+        assert "Payment status" in response
+        assert "Paid" in response
+
     def test_cancel_request_mid_verification_answers_policy_and_keeps_pending(self, monkeypatch):
         _scripted_tool_llm(
             monkeypatch,
