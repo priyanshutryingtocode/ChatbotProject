@@ -1,5 +1,6 @@
-import setup
 from langchain_core.globals import get_verbose
+
+import setup
 
 
 def test_langchain_verbose_compatibility():
