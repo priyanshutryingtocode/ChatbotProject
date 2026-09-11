@@ -9,7 +9,6 @@ from pathlib import Path
 
 from retriever import MIN_SIMILARITY, retrieve_policy_matches
 
-
 CASES_PATH = Path("eval/rag_eval_cases.json")
 
 
@@ -20,7 +19,14 @@ def evaluate(cases: list[dict]) -> tuple[list[dict], dict[str, float | int]]:
         returned_docs = list(dict.fromkeys(match.get("doc_title", "Unknown") for match in matches))
         expected_docs = set(case["expected_docs"])
         passed = not returned_docs if not expected_docs else bool(expected_docs.intersection(returned_docs))
-        results.append({**case, "returned_docs": returned_docs, "scores": [round(match.get("similarity", 0), 3) for match in matches], "passed": passed})
+        results.append(
+            {
+                **case,
+                "returned_docs": returned_docs,
+                "scores": [round(match.get("similarity", 0), 3) for match in matches],
+                "passed": passed,
+            }
+        )
 
     positive = [result for result in results if result["expected_docs"]]
     negative = [result for result in results if not result["expected_docs"]]

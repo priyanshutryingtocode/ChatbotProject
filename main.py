@@ -4,7 +4,6 @@ from chat_handler import OrderChatHandler
 from database import get_messages, record_feedback
 from sidebar import invalidate_recent_chats_cache, render_sidebar
 
-
 # ---------------------------------------------------------
 # PAGE CONFIG
 # ---------------------------------------------------------
@@ -20,6 +19,7 @@ st.set_page_config(
 # ---------------------------------------------------------
 # STYLING
 # ---------------------------------------------------------
+
 
 def apply_theme() -> None:
     st.markdown(
@@ -261,17 +261,11 @@ def _load_conversation(conversation_id: str) -> None:
 
     st.session_state.viewing_conversation_id = conversation_id
 
-    st.session_state.chat_handler = OrderChatHandler(
-        conversation_id=conversation_id
-    )
+    st.session_state.chat_handler = OrderChatHandler(conversation_id=conversation_id)
 
     st.session_state.messages = [
         {
-            "role": (
-                message.get("role")
-                if message.get("role") in ("user", "assistant")
-                else "assistant"
-            ),
+            "role": (message.get("role") if message.get("role") in ("user", "assistant") else "assistant"),
             "content": message.get("content", ""),
         }
         for message in get_messages(conversation_id)
@@ -282,7 +276,6 @@ def _load_conversation(conversation_id: str) -> None:
 
 
 def initialize_session_state() -> None:
-
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -303,11 +296,9 @@ def initialize_session_state() -> None:
     viewing = st.session_state.viewing_conversation_id
 
     if requested:
-
         _load_conversation(requested)
 
     elif viewing == FIRST_LOAD:
-
         url_id = st.query_params.get("chat")
 
         if url_id:
@@ -320,13 +311,9 @@ def initialize_session_state() -> None:
                 st.session_state.chat_handler = OrderChatHandler()
 
     elif viewing is not None:
-
         handler = st.session_state.get("chat_handler")
 
-        if (
-            handler is None
-            or handler.conversation_id != viewing
-        ):
+        if handler is None or handler.conversation_id != viewing:
             _load_conversation(viewing)
 
 
@@ -334,8 +321,8 @@ def initialize_session_state() -> None:
 # NEW CHAT
 # ---------------------------------------------------------
 
-def start_new_chat() -> None:
 
+def start_new_chat() -> None:
     st.session_state.viewing_conversation_id = None
 
     st.session_state.chat_handler.end_session()
@@ -364,21 +351,19 @@ def start_new_chat() -> None:
 # HEADER
 # ---------------------------------------------------------
 
-def render_header() -> None:
 
+def render_header() -> None:
     left, right = st.columns(
         [4, 1],
         vertical_alignment="center",
     )
 
     with left:
-
         st.markdown(
             "### Order Status Assistant",
         )
 
     with right:
-
         st.button(
             "New chat",
             on_click=start_new_chat,
@@ -390,32 +375,22 @@ def render_header() -> None:
 # FEEDBACK
 # ---------------------------------------------------------
 
+
 def render_feedback_buttons(message_index: int) -> None:
-
     if st.session_state.get("feedback_given"):
-
         st.caption("Thanks for your feedback!")
 
         return
 
-    left, right, _ = st.columns(
-        [1, 1, 6]
-    )
+    left, right, _ = st.columns([1, 1, 6])
 
     with left:
-
         if st.button(
             "Helpful",
             key=f"fb_up_{message_index}",
             help="Helpful",
         ):
-
-            message_id = (
-                st.session_state
-                .chat_handler
-                .last_message_ids
-                .get("assistant", "")
-            )
+            message_id = st.session_state.chat_handler.last_message_ids.get("assistant", "")
 
             record_feedback(
                 message_id,
@@ -427,19 +402,12 @@ def render_feedback_buttons(message_index: int) -> None:
             st.rerun()
 
     with right:
-
         if st.button(
             "Not helpful",
             key=f"fb_down_{message_index}",
             help="Not helpful",
         ):
-
-            message_id = (
-                st.session_state
-                .chat_handler
-                .last_message_ids
-                .get("assistant", "")
-            )
+            message_id = st.session_state.chat_handler.last_message_ids.get("assistant", "")
 
             record_feedback(
                 message_id,
@@ -455,14 +423,13 @@ def render_feedback_buttons(message_index: int) -> None:
 # CHAT
 # ---------------------------------------------------------
 
-def render_chat_interface() -> None:
 
+def render_chat_interface() -> None:
     # -------------------------
     # Welcome screen
     # -------------------------
 
     if not st.session_state.messages:
-
         st.markdown(
             """
             <div class="welcome">
@@ -483,20 +450,14 @@ def render_chat_interface() -> None:
     # -------------------------
 
     for message in st.session_state.messages:
-
         with st.chat_message(message["role"]):
-
-            st.markdown(
-                message["content"]
-            )
+            st.markdown(message["content"])
 
     # -------------------------
     # Input
     # -------------------------
 
-    prompt = st.chat_input(
-        "Ask about an order, customer, delivery, or payment status..."
-    )
+    prompt = st.chat_input("Ask about an order, customer, delivery, or payment status...")
 
     if not prompt:
         return
@@ -513,7 +474,6 @@ def render_chat_interface() -> None:
     )
 
     with st.chat_message("user"):
-
         st.markdown(prompt)
 
     # -------------------------
@@ -521,21 +481,11 @@ def render_chat_interface() -> None:
     # -------------------------
 
     with st.chat_message("assistant"):
-
         try:
-
-            response = st.write_stream(
-                st.session_state.chat_handler.stream_response(
-                    prompt
-                )
-            )
+            response = st.write_stream(st.session_state.chat_handler.stream_response(prompt))
 
         except Exception:
-
-            response = (
-                "I couldn't complete that lookup. "
-                "Please verify the search value and try again."
-            )
+            response = "I couldn't complete that lookup. Please verify the search value and try again."
 
             st.markdown(response)
 
@@ -564,8 +514,8 @@ def render_chat_interface() -> None:
 # MAIN
 # ---------------------------------------------------------
 
-def main() -> None:
 
+def main() -> None:
     apply_theme()
 
     initialize_session_state()

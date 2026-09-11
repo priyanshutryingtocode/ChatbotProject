@@ -8,10 +8,9 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-IST = timezone(timedelta(hours=5, minutes=30))
-
 from setup import supabase_server_client
 
+IST = timezone(timedelta(hours=5, minutes=30))
 logger = logging.getLogger(__name__)
 MAX_ORDERS_PER_LOOKUP = 20
 
@@ -57,7 +56,8 @@ def _orders_for_customer_ids(customer_ids: list[str]) -> list[dict]:
     if not customer_ids:
         return []
     response = (
-        _client().table("orders")
+        _client()
+        .table("orders")
         .select(ORDER_SELECT)
         .in_("customer_id", customer_ids)
         .order("ordered_at", desc=True)
@@ -70,11 +70,7 @@ def _orders_for_customer_ids(customer_ids: list[str]) -> list[dict]:
 def get_order_by_id(order_id: int | str) -> dict | None:
     try:
         response = (
-            _client().table("orders")
-            .select(ORDER_SELECT)
-            .eq("public_order_id", int(order_id))
-            .limit(1)
-            .execute()
+            _client().table("orders").select(ORDER_SELECT).eq("public_order_id", int(order_id)).limit(1).execute()
         )
         return response.data[0] if response.data else None
     except (TypeError, ValueError):
@@ -116,7 +112,8 @@ def get_orders_by_phone(phone: str) -> list[dict]:
 def search_orders_by_name(name: str) -> list[dict]:
     try:
         customers = (
-            _client().table("customers")
+            _client()
+            .table("customers")
             .select("id")
             .ilike("full_name", f"%{name.strip()}%")
             .limit(MAX_ORDERS_PER_LOOKUP)
@@ -139,10 +136,7 @@ def find_orders(criteria: dict, require_order_id: bool = True) -> list[dict]:
 
     Raises ValueError when the required identity fields are missing.
     """
-    provided = {
-        key: str(value).strip() if value is not None else ""
-        for key, value in criteria.items()
-    }
+    provided = {key: str(value).strip() if value is not None else "" for key, value in criteria.items()}
     provided = {key: value for key, value in provided.items() if value}
 
     if require_order_id and "order_id" not in provided:
@@ -241,9 +235,7 @@ def create_conversation(channel: str = "streamlit", customer_email: str | None =
         return ""
 
 
-def append_message(
-    conversation_id: str, role: str, content: str, db_results: dict | None = None
-) -> str:
+def append_message(conversation_id: str, role: str, content: str, db_results: dict | None = None) -> str:
     """Store one chat message. Returns the new message id ("" if it failed)."""
     if not conversation_id:
         return ""
@@ -264,7 +256,8 @@ def get_messages(conversation_id: str, limit: int = 50) -> list[dict]:
         return []
     try:
         response = (
-            _client().table("messages")
+            _client()
+            .table("messages")
             .select("id, role, content, db_results, created_at")
             .eq("conversation_id", conversation_id)
             .order("created_at", desc=False)
@@ -303,7 +296,8 @@ def list_conversations(limit: int = 10) -> list[dict]:
     """Most recent conversations, newest first. Best-effort, never raises."""
     try:
         response = (
-            _client().table("conversations")
+            _client()
+            .table("conversations")
             .select("id, channel, customer_email, created_at, ended_at")
             .order("created_at", desc=True)
             .limit(limit)

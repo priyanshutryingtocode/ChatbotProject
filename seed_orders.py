@@ -19,14 +19,24 @@ from pathlib import Path
 from dotenv import load_dotenv
 from faker import Faker
 
-
 STATUSES = ["Processing", "In Transit", "Out for Delivery", "Delivered", "Cancelled", "Failed Delivery"]
 STATUS_WEIGHTS = [12, 16, 8, 54, 6, 4]
 ITEMS = [
-    "Wireless Headphones", "USB-C Charger", "Running Shoes", "Coffee Maker",
-    "Laptop Stand", "Water Bottle", "Backpack", "Desk Lamp", "Phone Case",
-    "Bluetooth Speaker", "Yoga Mat", "Smart Watch",
-    "Power Bank", "Mechanical Keyboard", "Wireless Mouse",
+    "Wireless Headphones",
+    "USB-C Charger",
+    "Running Shoes",
+    "Coffee Maker",
+    "Laptop Stand",
+    "Water Bottle",
+    "Backpack",
+    "Desk Lamp",
+    "Phone Case",
+    "Bluetooth Speaker",
+    "Yoga Mat",
+    "Smart Watch",
+    "Power Bank",
+    "Mechanical Keyboard",
+    "Wireless Mouse",
 ]
 TIME_SLOTS = ["9 AM - 12 PM", "12 PM - 3 PM", "3 PM - 6 PM", "6 PM - 9 PM"]
 PRIORITIES = ["Standard", "Standard", "Standard", "Express", "Priority"]
@@ -48,7 +58,10 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
     )
     quantity = random.randint(1, 4)
     selected_items = random.sample(ITEMS, k=min(random.randint(1, 3), len(ITEMS)))
-    item_prices = [Decimal(str(random.choice([299, 399, 499, 599, 799, 999, 1299, 1499, 1999, 2499, 2999, 3999, 4999, 6999]))) for _ in selected_items]
+    item_prices = [
+        Decimal(str(random.choice([299, 399, 499, 599, 799, 999, 1299, 1499, 1999, 2499, 2999, 3999, 4999, 6999])))
+        for _ in selected_items
+    ]
     subtotal = sum((price * quantity for price in item_prices), Decimal("0"))
     shipping_fee = Decimal("0") if status == "Cancelled" else Decimal(str(random.choice([0, 49, 69, 99, 149])))
     tax_amount = (subtotal * Decimal("0.18")).quantize(Decimal("0.01"))
@@ -64,7 +77,9 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
         "tax_amount": str(tax_amount),
         "special_instructions": random.choice([None, "Leave at reception", "Call on arrival", "Leave at front door"]),
         "ordered_at": datetime.combine(order_date, datetime.min.time(), tzinfo=timezone.utc).isoformat(),
-        "cancelled_at": datetime.combine(order_date, datetime.min.time(), tzinfo=timezone.utc).isoformat() if status == "Cancelled" else None,
+        "cancelled_at": datetime.combine(order_date, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+        if status == "Cancelled"
+        else None,
     }
     items = [
         {
@@ -84,12 +99,18 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
             "tracking_number": f"IN{order_id:08d}",
             "delivery_driver_name": fake.name(),
             "estimated_delivery_at": estimated.isoformat(),
-            "delivered_at": (estimated + timedelta(minutes=random.randint(-45, 120))).isoformat() if status == "Delivered" else None,
+            "delivered_at": (estimated + timedelta(minutes=random.randint(-45, 120))).isoformat()
+            if status == "Delivered"
+            else None,
             "delivery_time_slot": random.choice(TIME_SLOTS),
         }
     event_type = {
-        "Processing": "processing", "In Transit": "dispatched", "Out for Delivery": "out_for_delivery",
-        "Delivered": "delivered", "Cancelled": "cancelled", "Failed Delivery": "failed_delivery",
+        "Processing": "processing",
+        "In Transit": "dispatched",
+        "Out for Delivery": "out_for_delivery",
+        "Delivered": "delivered",
+        "Cancelled": "cancelled",
+        "Failed Delivery": "failed_delivery",
     }[status]
     event = {
         "order_id": order_id,
@@ -120,10 +141,19 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
     random.seed(seed)
     fake = Faker("en_IN")
     fake.seed_instance(seed)
-    records = {table: [] for table in (
-        "customers", "customer_addresses", "orders", "order_delivery_addresses",
-        "order_items", "shipments", "order_events", "payments",
-    )}
+    records = {
+        table: []
+        for table in (
+            "customers",
+            "customer_addresses",
+            "orders",
+            "order_delivery_addresses",
+            "order_items",
+            "shipments",
+            "order_events",
+            "payments",
+        )
+    }
     for customer_number in range(customers):
         full_name = fake.name()
         customer_id = customer_number + 1
@@ -137,20 +167,31 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
         customer.pop("customer_name")
         records["customers"].append(customer)
         address = {
-            "customer_id": customer_id, "label": "Home", "line1": fake.street_address(),
-            "city": fake.city(), "state_or_region": fake.state(), "postal_code": fake.postcode(),
-            "country_code": "IN", "is_default": True,
+            "customer_id": customer_id,
+            "label": "Home",
+            "line1": fake.street_address(),
+            "city": fake.city(),
+            "state_or_region": fake.state(),
+            "postal_code": fake.postcode(),
+            "country_code": "IN",
+            "is_default": True,
         }
         records["customer_addresses"].append(address)
         for order_number in range(orders_per_customer):
             order_id = start_order_id + customer_number * orders_per_customer + order_number
             order, items, shipment, created_event, status_event, payment = make_order(fake, customer_id, order_id)
             records["orders"].append(order)
-            records["order_delivery_addresses"].append({
-                "order_id": order["public_order_id"], "recipient_name": full_name, "line1": address["line1"],
-                "city": address["city"], "state_or_region": address["state_or_region"],
-                "postal_code": address["postal_code"], "country_code": address["country_code"],
-            })
+            records["order_delivery_addresses"].append(
+                {
+                    "order_id": order["public_order_id"],
+                    "recipient_name": full_name,
+                    "line1": address["line1"],
+                    "city": address["city"],
+                    "state_or_region": address["state_or_region"],
+                    "postal_code": address["postal_code"],
+                    "country_code": address["country_code"],
+                }
+            )
             records["order_items"].extend(items)
             if shipment:
                 records["shipments"].append(shipment)
@@ -173,8 +214,14 @@ def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
 
     client = create_client(url, key)
     insert_order = [
-        "customers", "customer_addresses", "orders", "order_delivery_addresses",
-        "order_items", "shipments", "order_events", "payments",
+        "customers",
+        "customer_addresses",
+        "orders",
+        "order_delivery_addresses",
+        "order_items",
+        "shipments",
+        "order_events",
+        "payments",
     ]
     for table in insert_order:
         rows = records[table]
@@ -188,12 +235,18 @@ def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create synthetic records for the normalized order schema using Faker.")
+    parser = argparse.ArgumentParser(
+        description="Create synthetic records for the normalized order schema using Faker."
+    )
     parser.add_argument("--customers", type=int, default=50, help="Number of unique fake customers (default: 50).")
     parser.add_argument("--orders-per-customer", type=int, default=2, help="Orders per customer (default: 2).")
-    parser.add_argument("--start-order-id", type=int, default=1, help="First synthetic order ID, from 1 to 1000 (default: 1).")
+    parser.add_argument(
+        "--start-order-id", type=int, default=1, help="First synthetic order ID, from 1 to 1000 (default: 1)."
+    )
     parser.add_argument("--seed", type=int, default=20260819, help="Seed for reproducible data.")
-    parser.add_argument("--output", type=Path, default=Path("data/normalized_fake_orders.json"), help="JSON output path.")
+    parser.add_argument(
+        "--output", type=Path, default=Path("data/normalized_fake_orders.json"), help="JSON output path."
+    )
     parser.add_argument("--insert", action="store_true", help="Insert records into Supabase after writing JSON.")
     parser.add_argument("--batch-size", type=int, default=100, help="Supabase insert batch size (default: 100).")
     return parser.parse_args()

@@ -1,8 +1,9 @@
 import os
+
 from dotenv import load_dotenv
-from supabase import create_client, Client
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from supabase import Client, create_client
 
 load_dotenv()
 
@@ -47,13 +48,15 @@ Order Status Meanings:
 - Cancelled: Order cancelled
 - Failed Delivery: Delivery attempt unsuccessful"""
 
+
 def chatmodel():
-    
     return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",       
-        google_api_key=GEMINI_API_KEY,   
+        model="gemini-2.5-flash",
+        google_api_key=GEMINI_API_KEY,
         temperature=0.2,
     )
+
+
 def supabase_server_client() -> Client:
     """Create a server-only Supabase client for the internal support workspace."""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:

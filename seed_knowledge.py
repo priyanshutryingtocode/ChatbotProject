@@ -25,7 +25,6 @@ from dotenv import load_dotenv
 
 from retriever import embed_texts
 
-
 MAX_CHARS = 600
 OVERLAP_CHARS = 120
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
@@ -37,7 +36,7 @@ def _tail_for_overlap(text: str) -> str:
         return text
     tail = text[-OVERLAP_CHARS:]
     boundary = tail.find(" ")
-    return tail[boundary + 1:] if boundary >= 0 else tail
+    return tail[boundary + 1 :] if boundary >= 0 else tail
 
 
 def _split_long_paragraph(paragraph: str) -> list[str]:
@@ -116,7 +115,9 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
         title = doc_title(path, text)
         digest = file_hash(path)
 
-        existing = client.table("knowledge_documents").select("id, content_hash").eq("title", title).execute().data or []
+        existing = (
+            client.table("knowledge_documents").select("id, content_hash").eq("title", title).execute().data or []
+        )
         if existing and existing[0].get("content_hash") == digest and not reingest:
             print(f"Skipping '{title}' (unchanged).")
             continue
@@ -164,9 +165,11 @@ def main() -> None:
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     api_key = os.getenv("GEMINI_API_KEY")
-    missing = [name for name, value in (
-        ("SUPABASE_URL", url), ("SUPABASE_SERVICE_ROLE_KEY", key), ("GEMINI_API_KEY", api_key)
-    ) if not value]
+    missing = [
+        name
+        for name, value in (("SUPABASE_URL", url), ("SUPABASE_SERVICE_ROLE_KEY", key), ("GEMINI_API_KEY", api_key))
+        if not value
+    ]
     if missing:
         raise RuntimeError(f"Missing required env vars: {', '.join(missing)}.")
 

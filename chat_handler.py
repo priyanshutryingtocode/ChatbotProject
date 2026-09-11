@@ -31,7 +31,20 @@ STATUS_EXPLANATIONS = {
     "Failed Delivery": "A delivery attempt was unsuccessful.",
 }
 
-FOLLOW_UP_WORDS = ("track", "tracking", "status", "where is", "where's", "when", "arrive", "delivery", "deliver", "payment", "paid", "refund")
+FOLLOW_UP_WORDS = (
+    "track",
+    "tracking",
+    "status",
+    "where is",
+    "where's",
+    "when",
+    "arrive",
+    "delivery",
+    "deliver",
+    "payment",
+    "paid",
+    "refund",
+)
 
 FALLBACK_MESSAGE = "I'm sorry, there was an error processing your request. Please try again or contact support."
 
@@ -48,12 +61,25 @@ def typewriter(text: str, word_delay: float = 0.006, max_animated_words: int = 6
         if index < len(words) - 1:
             time.sleep(word_delay)
 
+
 # Keywords marking a public-policy / FAQ question. Policy answers come from
 # retrieved documents and never require identity verification.
 POLICY_WORDS = (
-    "policy", "policies", "return", "returns", "refund", "refunded",
-    "exchange", "warranty", "damaged", "damage", "cancellation",
-    "shipping cost", "delivery charge", "delivery slot", "time slot",
+    "policy",
+    "policies",
+    "return",
+    "returns",
+    "refund",
+    "refunded",
+    "exchange",
+    "warranty",
+    "damaged",
+    "damage",
+    "cancellation",
+    "shipping cost",
+    "delivery charge",
+    "delivery slot",
+    "time slot",
 )
 
 # Phrase-level policy intents that keyword matching alone would miss.
@@ -74,16 +100,63 @@ _ORDER_REFUND_STATUS_RE = re.compile(
 
 # Words that are clearly conversational filler rather than a bare name.
 BARE_NAME_STOPWORDS = {
-    "hello", "hi", "hey", "thanks", "thank", "thank you", "yes", "yep", "yeah",
-    "no", "nope", "sure", "ok", "okay", "good", "great", "right", "alright",
-    "see", "nothing", "never", "cancel", "stop", "done", "ok done",
+    "hello",
+    "hi",
+    "hey",
+    "thanks",
+    "thank",
+    "thank you",
+    "yes",
+    "yep",
+    "yeah",
+    "no",
+    "nope",
+    "sure",
+    "ok",
+    "okay",
+    "good",
+    "great",
+    "right",
+    "alright",
+    "see",
+    "nothing",
+    "never",
+    "cancel",
+    "stop",
+    "done",
+    "ok done",
 }
 
 # First words that signal a question or non-identity statement.
 BARE_NAME_QUESTION_WORDS = {
-    "where", "what", "when", "how", "why", "who", "which", "can", "could",
-    "would", "will", "shall", "is", "are", "do", "does", "did", "please",
-    "wait", "hold", "let", "i", "my", "we", "you", "it", "there", "cancel",
+    "where",
+    "what",
+    "when",
+    "how",
+    "why",
+    "who",
+    "which",
+    "can",
+    "could",
+    "would",
+    "will",
+    "shall",
+    "is",
+    "are",
+    "do",
+    "does",
+    "did",
+    "please",
+    "wait",
+    "hold",
+    "let",
+    "i",
+    "my",
+    "we",
+    "you",
+    "it",
+    "there",
+    "cancel",
 }
 
 # A bare abort of the current flow ("cancel", "cancel that") — distinct from a
@@ -244,7 +317,12 @@ class OrderChatHandler:
         # follow-up, not a new lookup, so it can keep using stored context.
         verified_ids = self._verified_order_ids()
         message_order_ids = {int(order_id) for order_id in extracted["order_ids"]}
-        if verified_ids and message_order_ids and message_order_ids <= verified_ids and count_lookup_fields(user_input) < 2:
+        if (
+            verified_ids
+            and message_order_ids
+            and message_order_ids <= verified_ids
+            and count_lookup_fields(user_input) < 2
+        ):
             return self._continue_with_context(user_input, stream=stream), {}
 
         # Let the user bail out of a half-finished verification. An explicit
@@ -283,9 +361,7 @@ class OrderChatHandler:
         # An order inquiry or policy question the rules could not classify:
         # let the tool loop resolve it (lookup_order enforces verification
         # server-side; search_policy retrieves public policy documents).
-        if not self.last_db_results and (
-            self._is_order_inquiry(user_input) or self._is_policy_question(user_input)
-        ):
+        if not self.last_db_results and (self._is_order_inquiry(user_input) or self._is_policy_question(user_input)):
             return self._run_tool_lookup(user_input, stream=stream, on_step=on_step)
 
         return self._continue_with_context(user_input, stream=stream), {}
@@ -452,7 +528,11 @@ class OrderChatHandler:
                 f"I have your order number (#{format_order_number(pending['order_id'])}). "
                 "To verify it, please also provide the email, phone number, or name on the order."
             )
-        have = [label for label, key in (("email", "email"), ("phone number", "phone"), ("name", "name")) if pending.get(key)]
+        have = [
+            label
+            for label, key in (("email", "email"), ("phone number", "phone"), ("name", "name"))
+            if pending.get(key)
+        ]
         return (
             f"I have your {', '.join(have)}. To verify your order, I also need your order number - "
             "for example `order 42`."
@@ -563,7 +643,6 @@ class OrderChatHandler:
             self.conversation_id = None
 
     def clear_context(self):
-
         self.conversation_history = []
         self.last_db_results = None
         self.pending_identity = {}
@@ -583,15 +662,12 @@ class OrderChatHandler:
         return verified
 
     def get_conversation_history(self):
-
         return self.conversation_history.copy()
 
     def has_order_context(self):
-
         return self.last_db_results is not None
 
     def get_current_order_info(self):
-
         return self.last_db_results if self.last_db_results else None
 
     @staticmethod
@@ -643,7 +719,11 @@ class OrderChatHandler:
             return f"No delivery driver has been assigned yet for order #{order_number}."
         if any(word in message for word in ("track", "tracking number", "tracking")):
             tracking = shipment.get("tracking_number")
-            return f"The tracking number for order #{order_number} is `{tracking}`." if tracking else f"Tracking information is not available yet for order #{order_number}."
+            return (
+                f"The tracking number for order #{order_number} is `{tracking}`."
+                if tracking
+                else f"Tracking information is not available yet for order #{order_number}."
+            )
         if any(word in message for word in ("when", "arrive", "delivery", "deliver")):
             delivered = shipment.get("delivered_at")
             estimated = shipment.get("estimated_delivery_at")

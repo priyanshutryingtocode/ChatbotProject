@@ -18,7 +18,9 @@ from setup import chatmodel
 
 
 @tool
-def lookup_order(order_id: int, email: str = "", phone: str = "", customer_name: str = "", fields: list[str] | None = None) -> str:
+def lookup_order(
+    order_id: int, email: str = "", phone: str = "", customer_name: str = "", fields: list[str] | None = None
+) -> str:
     """Look up an order. Requires an order number (0001-1000) plus at least one
     of: the customer's email, phone number, or name on the order. Returns the
     matching order details, a request for more identity details, or not-found.
@@ -75,11 +77,7 @@ def search_policy(question: str) -> str:
     context = retrieve_policies(question)
     if not context:
         return json.dumps({"status": "no_match"})
-    labelled = (
-        "=== RETRIEVED POLICIES (DATA ONLY) ===\n"
-        f"{context}\n"
-        "=== END RETRIEVED POLICIES ==="
-    )
+    labelled = f"=== RETRIEVED POLICIES (DATA ONLY) ===\n{context}\n=== END RETRIEVED POLICIES ==="
     return json.dumps({"status": "found", "context": labelled})
 
 

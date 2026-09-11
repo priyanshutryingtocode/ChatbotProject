@@ -1,80 +1,81 @@
 import re
+
 from database import normalize_phone
 
-def extract_info_from_query(query):
 
-    info = {'order_ids': [], 'emails': [], 'phones': [], 'names': []}
-    
+def extract_info_from_query(query):
+    info = {"order_ids": [], "emails": [], "phones": [], "names": []}
+
     order_patterns = [
         # Broad opener: "order 42", "order number 42", "order id 42", "order: 42",
         # "order #42", "order42", plus bare "number 4", "no 4", "no. 4".
         # (\d{1,4} is range-bounded; anything above 1000 is filtered below.)
-        r'\b(?:order\s*(?:number|id)?|number|no\.?)\s*(?:is|:)?\s*[:#]?\s*(\d{1,4})\b',
+        r"\b(?:order\s*(?:number|id)?|number|no\.?)\s*(?:is|:)?\s*[:#]?\s*(\d{1,4})\b",
         # "it's 4", "it is 4", "its 4"
         r"\b(?:it'?s|it is)\s+(\d{1,4})\b",
         # "order 42", "order#42", "order :42", "order #:42" (multi-separator forms)
-        r'order[:\s#]+(\d+)',
+        r"order[:\s#]+(\d+)",
         # "#42"
-        r'#(\d+)',
+        r"#(\d+)",
         # Any standalone 4+ digit number (range-filtered below to 1..1000)
-        r'\b(\d{4,})\b',
+        r"\b(\d{4,})\b",
     ]
-    
+
     for pattern in order_patterns:
         matches = re.findall(pattern, query, re.IGNORECASE)
         for match in matches:
             try:
                 order_id = int(match)
-                if 1 <= order_id <= 1000 and str(order_id) not in info['order_ids']:
-                    info['order_ids'].append(str(order_id))
+                if 1 <= order_id <= 1000 and str(order_id) not in info["order_ids"]:
+                    info["order_ids"].append(str(order_id))
             except ValueError:
                 continue
-    
-    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    info['emails'] = re.findall(email_pattern, query)
+
+    email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
+    info["emails"] = re.findall(email_pattern, query)
 
     phone_patterns = [
-        r'\b\d{10}\b',                          # 1234567890
-        r'\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b',     # 123-456-7890, 123.456.7890, 123 456 7890
+        r"\b\d{10}\b",  # 1234567890
+        r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b",  # 123-456-7890, 123.456.7890, 123 456 7890
     ]
-    
+
     for pattern in phone_patterns:
         matches = re.findall(pattern, query)
         for phone in matches:
             clean_phone = normalize_phone(phone)
             if len(clean_phone) == 10 and clean_phone.isdigit():
-                info['phones'].append(clean_phone)
-    
+                info["phones"].append(clean_phone)
+
     # Name captures are word-capped (max three words) so surrounding prose can
     # never be swallowed into an identity value, and delimiter-anchored so a
     # bare "name …" mention doesn't grab whatever follows it.
-    name_word = r'([A-Za-z]+(?:\s+[A-Za-z]+){0,2})'
+    name_word = r"([A-Za-z]+(?:\s+[A-Za-z]+){0,2})"
     name_patterns = [
-        rf'\b(?:full\s+)?name\b\s*(?::|\bis\b)\s*{name_word}',   # "name: Jane Doe", "name is Gaurang"
-        rf'\bcustomer\b\s*(?::|\bis\b)\s*{name_word}',            # "customer: John Doe"
+        rf"\b(?:full\s+)?name\b\s*(?::|\bis\b)\s*{name_word}",  # "name: Jane Doe", "name is Gaurang"
+        rf"\bcustomer\b\s*(?::|\bis\b)\s*{name_word}",  # "customer: John Doe"
         rf"(?:my name is|my name's|i'?m|i am|this is)\s+{name_word}",  # "my name is Jane Doe", "i'm John"
-        rf'{name_word}\s+is my name',                           # "Jane Doe is my name"
+        rf"{name_word}\s+is my name",  # "Jane Doe is my name"
         # Prose bridge: "the name on it should be gaurang", "name was wrong: it's Ana"
-        rf'\bname\b[^.!?\n]{{0,30}}?\b(?:should\s+be|is|was)\s+{name_word}',
+        rf"\bname\b[^.!?\n]{{0,30}}?\b(?:should\s+be|is|was)\s+{name_word}",
     ]
 
     for pattern in name_patterns:
         matches = re.findall(pattern, query, re.IGNORECASE)
         for name in matches:
-            clean_name = re.sub(r'^(?:my|i|is|am|are)\s+', '', name.strip(), flags=re.IGNORECASE)
+            clean_name = re.sub(r"^(?:my|i|is|am|are)\s+", "", name.strip(), flags=re.IGNORECASE)
             if len(clean_name) > 2 and not any(c.isdigit() for c in clean_name):
-                info['names'].append(clean_name)
+                info["names"].append(clean_name)
 
     # Patterns intentionally overlap (e.g. "name is X" hits two rules);
     # dedupe case-insensitively while preserving order.
     seen = set()
     unique_names = []
-    for name in info['names']:
+    for name in info["names"]:
         key = name.lower()
         if key not in seen:
             seen.add(key)
             unique_names.append(name)
-    info['names'] = unique_names
+    info["names"] = unique_names
 
     return info
 
@@ -165,8 +166,14 @@ FIELD_ALIASES = {
 # applied on top of the always-on baseline.
 INTENT_MAP = [
     (re.compile(r"\b(?:delivery\s*driver|driver|drivers|who\s*is\s*delivering)\b"), {"driver"}),
-    (re.compile(r"\b(?:tracking|track|tracking\s*number|courier|carrier|shipped\s*by|shipping\s*company)\b"), {"tracking", "carrier"}),
-    (re.compile(r"\b(?:when|arrive|arrival|eta|expected|deliver|delivered|delivery\s*(?:date|time|estimate))\b"), {"delivery"}),
+    (
+        re.compile(r"\b(?:tracking|track|tracking\s*number|courier|carrier|shipped\s*by|shipping\s*company)\b"),
+        {"tracking", "carrier"},
+    ),
+    (
+        re.compile(r"\b(?:when|arrive|arrival|eta|expected|deliver|delivered|delivery\s*(?:date|time|estimate))\b"),
+        {"delivery"},
+    ),
     (re.compile(r"\b(?:payment|paid|refund|refunded|charge|charged|total|amount|cost|price)\b"), {"payment"}),
     (re.compile(r"\b(?:status|where\s*is|where's|progress)\b"), {"status"}),
     (re.compile(r"\b(?:item|items|product|products|bought|purchase|contain|contains|include|included)\b"), {"items"}),
