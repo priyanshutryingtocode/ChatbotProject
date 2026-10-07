@@ -1,6 +1,11 @@
 import re
 
-from database import normalize_phone
+from .config import MAX_ORDER_ID, MIN_ORDER_ID
+from .database import normalize_phone
+
+# An order-number reference whose value falls outside the supported 1..1000
+# range. Still a lookup attempt, so it deserves a grounded "not found".
+_OUT_OF_RANGE_ORDER_RE = re.compile(r"(?:\border\s*(?:id|number)?\s*[:#]?\s*|#)\d+", re.IGNORECASE)
 
 
 def extract_info_from_query(query):
@@ -26,7 +31,7 @@ def extract_info_from_query(query):
         for match in matches:
             try:
                 order_id = int(match)
-                if 1 <= order_id <= 1000 and str(order_id) not in info["order_ids"]:
+                if MIN_ORDER_ID <= order_id <= MAX_ORDER_ID and str(order_id) not in info["order_ids"]:
                     info["order_ids"].append(str(order_id))
             except ValueError:
                 continue
@@ -80,20 +85,28 @@ def extract_info_from_query(query):
     return info
 
 
-def count_lookup_fields(query: str) -> int:
-    """Number of distinct identity field types present (order id, email, phone, name)."""
-    info = extract_info_from_query(query)
+def count_lookup_fields(query, info: dict | None = None) -> int:
+    """Number of distinct identity field types present (order id, email, phone, name).
+
+    Pass `info` from an earlier extract_info_from_query() call to skip the
+    regex sweep when the message has already been parsed.
+    """
+    info = info if info is not None else extract_info_from_query(query)
     return sum(1 for values in info.values() if values)
 
 
-def has_lookup_identifier(query: str) -> bool:
-    """Whether a message explicitly asks the database to identify an order/customer."""
-    info = extract_info_from_query(query)
+def has_lookup_identifier(query: str, info: dict | None = None) -> bool:
+    """Whether a message explicitly asks the database to identify an order/customer.
+
+    Pass `info` from an earlier extract_info_from_query() call to skip the
+    regex sweep. The raw text is still required for the out-of-range check.
+    """
+    info = info if info is not None else extract_info_from_query(query)
     if any(info.values()):
         return True
     # Treat an out-of-range order number as a lookup too, so it produces a
-    # grounded “not found” response rather than a free-form model answer.
-    return bool(re.search(r"(?:\border\s*(?:id|number)?\s*[:#]?\s*|#)\d+", query, re.IGNORECASE))
+    # grounded "not found" response rather than a free-form model answer.
+    return bool(_OUT_OF_RANGE_ORDER_RE.search(query))
 
 
 def format_database_context(db_results, query=None, fields=None):
@@ -113,21 +126,19 @@ def format_database_context(db_results, query=None, fields=None):
         selected = None
 
     lines = ["=== DATABASE RESULTS (DATA ONLY) ==="]
-    for value in db_results.values():
-        orders = value if isinstance(value, list) else [value]
-        for order in orders:
-            field_lines = _context_field_lines(order)
-            if selected is None:
-                keys = [key for key in CONTEXT_FIELD_KEYS if key in field_lines]
-            else:
-                keys = [
-                    key
-                    for key in CONTEXT_FIELD_KEYS
-                    if key in field_lines and (key in CONTEXT_BASELINE_FIELDS or key in selected)
-                ]
-            for key in keys:
-                lines.append(field_lines[key])
-            lines.append("---")
+    for order in db_results.get("matched") or []:
+        field_lines = _context_field_lines(order)
+        if selected is None:
+            keys = [key for key in CONTEXT_FIELD_KEYS if key in field_lines]
+        else:
+            keys = [
+                key
+                for key in CONTEXT_FIELD_KEYS
+                if key in field_lines and (key in CONTEXT_BASELINE_FIELDS or key in selected)
+            ]
+        for key in keys:
+            lines.append(field_lines[key])
+        lines.append("---")
     lines.append("=== END DATABASE RESULTS ===")
     return "\n".join(lines)
 

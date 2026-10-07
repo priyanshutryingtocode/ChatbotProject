@@ -4,7 +4,9 @@ import re
 
 import streamlit as st
 
-from database import (
+from .config import MAX_ORDER_ID, MIN_ORDER_ID
+from .database import (
+    build_criteria,
     find_orders,
     format_event_line,
     format_order_for_display,
@@ -48,13 +50,7 @@ def _validate_fields(order_id: str, email: str, phone: str, name: str) -> str | 
 
 
 def _run_lookup(order_id: str, email: str, phone: str, name: str) -> list[dict]:
-    criteria = {"order_id": order_id}
-    if email.strip():
-        criteria["email"] = email.strip()
-    if phone.strip():
-        criteria["phone"] = phone.strip()
-    if name.strip():
-        criteria["name"] = name.strip()
+    criteria = build_criteria(order_id, email, phone, name)
     try:
         return find_orders(criteria, require_order_id=True)
     except ValueError:
@@ -153,7 +149,7 @@ def render_sidebar() -> None:
         st.caption("Run a direct database search without using the assistant.")
 
         with st.form("manual_lookup_form", clear_on_submit=False):
-            order_id = f"{st.number_input('Order number', min_value=1, max_value=1000, value=1, step=1, format='%04d', key='lookup_order_number'):04d}"
+            order_id = f"{st.number_input('Order number', min_value=MIN_ORDER_ID, max_value=MAX_ORDER_ID, value=MIN_ORDER_ID, step=1, format='%04d', key='lookup_order_number'):04d}"
             st.caption("Add at least one more detail to verify the order before searching.")
             email = st.text_input("Email address (optional)", placeholder="you@example.com", key="lookup_email")
             phone = st.text_input("Phone number (optional)", placeholder="10-digit number", key="lookup_phone")

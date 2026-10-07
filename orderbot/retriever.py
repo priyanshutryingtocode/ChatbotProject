@@ -10,7 +10,7 @@ a no-match answer instead of raising into the chat flow.
 import logging
 from functools import lru_cache
 
-from setup import GEMINI_API_KEY, supabase_server_client
+from .config import GEMINI_API_KEY, supabase_server_client
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,8 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 # Gemini embeddings default to 3072 dims; pin 768 to match the pgvector column.
 OUTPUT_DIMENSIONALITY = 768
 DEFAULT_MATCH_COUNT = 4
+# Authoritative similarity floor; passed on every call. Mirrored as the RPC
+# default in supabase/migrations/005_rag_retrieval_quality.sql.
 MIN_SIMILARITY = 0.6
 
 
@@ -54,32 +56,15 @@ def fit_dimensions(vectors: list[list[float]]) -> list[list[float]]:
 
 
 def _sdk_embed(texts: list[str]) -> list[list[float]]:
-    """Call whichever Google GenAI SDK is installed; no dimension guarantee."""
-    try:
-        client = _get_genai_client()
-        from google.genai import types
+    """Call the pinned google-genai SDK. No dimension guarantee."""
+    from google.genai import types
 
-        try:
-            response = client.models.embed_content(
-                model=EMBEDDING_MODEL,
-                contents=texts,
-                config=types.EmbedContentConfig(output_dimensionality=OUTPUT_DIMENSIONALITY),
-            )
-        except TypeError:
-            # Installed SDK predates EmbedContentConfig: take default dims and
-            # truncate below instead.
-            response = client.models.embed_content(model=EMBEDDING_MODEL, contents=texts)
-        return [list(item.values) for item in response.embeddings]
-    except ImportError:
-        import google.generativeai as genai_legacy  # type: ignore
-
-        genai_legacy.configure(api_key=GEMINI_API_KEY)
-        response = genai_legacy.embed_content(
-            model=f"models/{EMBEDDING_MODEL}",
-            content=texts,
-            output_dimensionality=OUTPUT_DIMENSIONALITY,
-        )
-        return [list(item["values"]) for item in response["embeddings"]]
+    response = _get_genai_client().models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=texts,
+        config=types.EmbedContentConfig(output_dimensionality=OUTPUT_DIMENSIONALITY),
+    )
+    return [list(item.values) for item in response.embeddings]
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
@@ -102,15 +87,13 @@ def _normalize_query(query: str) -> str:
 
 
 @lru_cache(maxsize=512)
-def _cached_query_embedding(query: str, model: str, dimensions: int) -> tuple[float, ...]:
-    """Cache bounded, normalized query embeddings by model configuration."""
-    del model, dimensions  # Included in the key so future configuration changes bypass stale entries.
+def _cached_query_embedding(query: str) -> tuple[float, ...]:
+    """Cache bounded, normalized query embeddings."""
     return tuple(embed_texts([query])[0])
 
 
 def _embed_query(query: str) -> list[float]:
-    normalized = _normalize_query(query)
-    return list(_cached_query_embedding(normalized, EMBEDDING_MODEL, OUTPUT_DIMENSIONALITY))
+    return list(_cached_query_embedding(_normalize_query(query)))
 
 
 def _match_chunks(embedding: list[float], k: int) -> list[dict]:

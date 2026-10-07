@@ -8,8 +8,8 @@ Ingestion is atomic per document. Embeddings are prepared locally, then a
 single database RPC replaces metadata and chunks in one transaction.
 
 Examples:
-    python seed_knowledge.py                 # ingest new/changed docs
-    python seed_knowledge.py --reingest      # re-embed every doc
+    python scripts/seed_knowledge.py                 # ingest new/changed docs
+    python scripts/seed_knowledge.py --reingest      # re-embed every doc
 
 Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env. Embedding calls
 use a separate, more generous quota than chat generation.
@@ -19,11 +19,19 @@ import argparse
 import hashlib
 import os
 import re
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from retriever import embed_texts
+# Running as `python scripts/<name>.py` puts scripts/ on sys.path rather than the
+# repository root, so orderbot would not resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from orderbot.retriever import embed_texts
+
+# Repo root, so the default --dir does not depend on the caller's directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 MAX_CHARS = 600
 OVERLAP_CHARS = 120
@@ -157,7 +165,9 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest knowledge/*.md into Supabase pgvector.")
-    parser.add_argument("--dir", type=Path, default=Path("knowledge"), help="Markdown source directory.")
+    parser.add_argument(
+        "--dir", type=Path, default=REPO_ROOT / "knowledge", help="Markdown source directory (default: knowledge/)."
+    )
     parser.add_argument("--reingest", action="store_true", help="Re-embed every document even if unchanged.")
     args = parser.parse_args()
 

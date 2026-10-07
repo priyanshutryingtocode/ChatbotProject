@@ -11,18 +11,19 @@ import json
 
 from langchain_core.tools import tool
 
-from database import find_orders
-from query import format_database_context, normalize_field_keys
-from retriever import retrieve_policies
-from setup import chatmodel
+from .config import chatmodel
+from .database import build_criteria, find_orders
+from .query import format_database_context, normalize_field_keys
+from .retriever import retrieve_policies
+from .state import VerificationState
 
 
 @tool
 def lookup_order(
     order_id: int, email: str = "", phone: str = "", customer_name: str = "", fields: list[str] | None = None
 ) -> str:
-    """Look up an order. Requires an order number (0001-1000) plus at least one
-    of: the customer's email, phone number, or name on the order. Returns the
+    """Look up an order. Requires an order number (0001 to 1000) plus at least
+    one of: the customer's email, phone number, or name on the order. Returns the
     matching order details, a request for more identity details, or not-found.
 
     Pass a `fields` list naming only the details the customer is asking about
@@ -30,13 +31,7 @@ def lookup_order(
     ["payment"], ["items"], ["customer"]). The order number and status are
     always included. Unknown field names are ignored.
     """
-    criteria = {"order_id": str(order_id)}
-    if email.strip():
-        criteria["email"] = email.strip()
-    if phone.strip():
-        criteria["phone"] = phone.strip()
-    if customer_name.strip():
-        criteria["name"] = customer_name.strip()
+    criteria = build_criteria(order_id, email, phone, customer_name)
 
     if len(criteria) < 2:
         return json.dumps(
@@ -51,7 +46,7 @@ def lookup_order(
         return json.dumps({"status": "not_found"})
 
     db_results = {"matched": orders}
-    name_only = bool(criteria.get("name") and not criteria.get("email") and not criteria.get("phone"))
+    name_only = VerificationState.from_criteria(criteria).name_only
     selected = normalize_field_keys(fields) if fields else set()
     if name_only:
         # A name is a lower-confidence verifier. Tool enforcement remains

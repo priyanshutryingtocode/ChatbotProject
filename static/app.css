@@ -1,0 +1,225 @@
+
+/* =========================
+   PAGE
+   ========================= */
+
+.stApp {
+    background: #0f1117;
+}
+
+[data-testid="stHeader"] {
+    background: transparent;
+    pointer-events: none;
+}
+
+[data-testid="stHeader"] * {
+    pointer-events: auto;
+}
+
+[data-testid="stHeader"] [data-testid="stToolbar"] {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+button[kind="headerNoPadding"] {
+    visibility: visible !important;
+    display: flex !important;
+    pointer-events: auto !important;
+    z-index: 9999 !important;
+}
+
+#MainMenu,
+footer {
+    visibility: hidden;
+}
+
+
+/* =========================
+   MAIN CONTENT
+   ========================= */
+
+.block-container {
+    max-width: 900px !important;
+    margin: 0 auto !important;
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+}
+
+
+/* =========================
+   HEADER
+   ========================= */
+
+.brand-title {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+
+/* =========================
+   CHAT MESSAGES
+   ========================= */
+
+[data-testid="stChatMessage"] {
+    background: #1a1f2b;
+    border: 1px solid #262c3a;
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1rem;
+}
+
+
+/* =========================
+   CHAT INPUT
+   ========================= */
+
+[data-testid="stChatInput"] {
+    max-width: 900px;
+    margin: 0 auto;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stChatInput"] > div {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] [contenteditable="true"] {
+    background: #1a1f2b !important;
+    border: 1px solid #2a3140 !important;
+    border-radius: 14px !important;
+    padding: 0.75rem 1rem !important;
+    box-shadow: none !important;
+    outline: none !important;
+
+    /* Single-line horizontal input */
+    white-space: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    resize: none !important;
+
+    /* Hide scrollbar */
+    scrollbar-width: none !important;
+}
+
+[data-testid="stChatInput"] textarea::-webkit-scrollbar {
+    display: none !important;
+}
+
+/* Keep the exact same appearance when focused */
+[data-testid="stChatInput"] textarea:focus,
+[data-testid="stChatInput"] textarea:focus-visible,
+[data-testid="stChatInput"]:focus-within,
+[data-testid="stChatInput"]:focus-within textarea {
+    background: #1a1f2b !important;
+    border: 1px solid #2a3140 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+[data-testid="stChatInput"] textarea::placeholder {
+    color: #6b7280;
+}
+
+
+/* =========================
+   SEND BUTTON
+   ========================= */
+
+[data-testid="stChatInputSubmitButton"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    color: #9aa2b1 !important;
+}
+
+[data-testid="stChatInputSubmitButton"]:hover,
+[data-testid="stChatInputSubmitButton"]:focus,
+[data-testid="stChatInputSubmitButton"]:focus-visible,
+[data-testid="stChatInputSubmitButton"]:active {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    color: #9aa2b1 !important;
+}
+
+[data-testid="stChatInputSubmitButton"][disabled] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #6b7280 !important;
+}
+
+
+/* =========================
+   WELCOME SCREEN
+   ========================= */
+
+.welcome {
+    text-align: center;
+    margin-top: 18vh;
+    margin-bottom: 4vh;
+}
+
+.welcome-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.welcome-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #f0f2f6;
+    margin-bottom: 0.5rem;
+}
+
+.welcome-text {
+    color: #8b93a3;
+    font-size: 0.95rem;
+}
+
+
+/* =========================
+   SIDEBAR
+   ========================= */
+
+[data-testid="stSidebar"] {
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+[data-testid="stSidebarContent"] {
+    padding-top: 1rem;
+}
+
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8b93a3;
+    margin: 0 0 0.35rem;
+}
+
+[data-testid="stSidebar"] [data-testid="stTextInput"] input,
+[data-testid="stSidebar"] [data-testid="stNumberInput"] input {
+    font-size: 0.85rem;
+    padding: 0.3rem 0.5rem;
+}
+
+.lookup-panel-title {
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8b93a3;
+    margin: 0 0 0.35rem;
+}

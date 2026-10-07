@@ -14,11 +14,29 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+# The public order-number range. Every entry point validates against this.
+MIN_ORDER_ID = 1
+MAX_ORDER_ID = 1000
+
+# Single source of truth for what each status means. The system prompt is
+# generated from this dict, so the prompt and the deterministic replies
+# cannot drift apart.
+STATUS_EXPLANATIONS = {
+    "Processing": "Order received, being processed.",
+    "In Transit": "Order dispatched, in transit.",
+    "Out for Delivery": "Order with the delivery driver.",
+    "Delivered": "Order successfully delivered.",
+    "Cancelled": "Order cancelled.",
+    "Failed Delivery": "Delivery attempt unsuccessful.",
+}
+
+_STATUS_GLOSSARY = "\n".join(f"- {status}: {meaning}" for status, meaning in STATUS_EXPLANATIONS.items())
+
 # System prompt for the assistant
-SYSTEM_PROMPT = """You are a professional Order Status Assistant. You help customers check their order status using the database information provided.
+SYSTEM_PROMPT = f"""You are a professional Order Status Assistant. You help customers check their order status using the database information provided.
 
 Order information is only shared after a customer verifies with BOTH:
-- an order number (supported range 0001 to 1000), AND
+- an order number (supported range {MIN_ORDER_ID:04d} to {MAX_ORDER_ID:04d}), AND
 - one more identity detail: their email, phone number, or the name on the order.
 
 When responding:
@@ -42,12 +60,7 @@ Public policies:
 - Never invent policy details, timeframes, fees, or amounts that are not in RETRIEVED POLICIES. If nothing relevant was retrieved, say you are not certain and suggest contacting support.
 
 Order Status Meanings:
-- Processing: Order received, being processed
-- In Transit: Order dispatched, in transit  
-- Out for Delivery: Order with delivery driver
-- Delivered: Order successfully delivered
-- Cancelled: Order cancelled
-- Failed Delivery: Delivery attempt unsuccessful"""
+{_STATUS_GLOSSARY}"""
 
 
 @lru_cache(maxsize=1)

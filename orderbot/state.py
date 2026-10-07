@@ -12,10 +12,6 @@ class VerificationState:
     name: str | None = None
 
     @property
-    def complete(self) -> bool:
-        return self.order_id is not None and self.has_secondary
-
-    @property
     def has_secondary(self) -> bool:
         return bool(self.email or self.phone or self.name)
 
@@ -81,10 +77,6 @@ class VerificationAttemptGuard:
     @property
     def locked(self) -> bool:
         return monotonic() < self.cooldown_until
-
-    @property
-    def remaining_seconds(self) -> int:
-        return max(0, int(self.cooldown_until - monotonic()))
 
     def record_failure(self) -> bool:
         self.failures += 1

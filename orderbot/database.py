@@ -8,19 +8,19 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from setup import supabase_server_client
+from .config import supabase_server_client
 
 IST = timezone(timedelta(hours=5, minutes=30))
 logger = logging.getLogger(__name__)
 MAX_ORDERS_PER_LOOKUP = 20
 
+# Only columns the app actually reads. Every extra column is paid for on each
+# lookup, and a verified lookup can run up to four of these queries.
 ORDER_SELECT = """
-    public_order_id, status, priority, payment_status, currency,
-    subtotal, shipping_fee, tax_amount, total_amount, special_instructions,
-    ordered_at, cancelled_at,
+    public_order_id, status, payment_status, currency, total_amount, ordered_at,
     customers!inner(full_name, email, phone),
-    order_items(product_sku, product_name, quantity, unit_price, line_total),
-    shipments(carrier, tracking_number, delivery_driver_name, estimated_delivery_at, delivered_at, delivery_time_slot),
+    order_items(product_name, quantity),
+    shipments(carrier, tracking_number, delivery_driver_name, estimated_delivery_at, delivered_at),
     order_events(event_type, event_at, message)
 """
 
@@ -125,6 +125,21 @@ def search_orders_by_name(name: str) -> list[dict]:
     except Exception:
         logger.exception("Database error in search_orders_by_name")
         return []
+
+
+def build_criteria(order_id=None, email="", phone="", name="") -> dict:
+    """Build a find_orders criteria dict, dropping blank values.
+
+    find_orders normalises and strips its own input, so this only decides which
+    keys are present.
+    """
+    criteria = {}
+    if order_id is not None:
+        criteria["order_id"] = order_id
+    for key, value in (("email", email), ("phone", phone), ("name", name)):
+        if value and str(value).strip():
+            criteria[key] = value
+    return criteria
 
 
 def find_orders(criteria: dict, require_order_id: bool = True) -> list[dict]:
@@ -280,16 +295,6 @@ def end_conversation(conversation_id: str) -> None:
         ).execute()
     except Exception:
         logger.exception("Failed to end conversation")
-
-
-def record_feedback(message_id: str, feedback: str) -> None:
-    """Record up/down feedback for an assistant message. Best-effort, never raises."""
-    if not message_id or feedback not in ("up", "down"):
-        return
-    try:
-        _client().table("messages").update({"feedback": feedback}).eq("id", message_id).execute()
-    except Exception:
-        logger.exception("Failed to record feedback")
 
 
 def list_conversations(limit: int = 10) -> list[dict]:

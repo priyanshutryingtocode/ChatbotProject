@@ -1,15 +1,51 @@
 """Evaluate live RAG retrieval against the curated policy-question set.
 
-Run after `seed_knowledge.py --reingest`:
-    python evaluate_rag.py
+Run after `scripts/seed_knowledge.py --reingest`:
+    python scripts/evaluate_rag.py
 """
 
 import json
+import sys
 from pathlib import Path
 
-from retriever import MIN_SIMILARITY, retrieve_policy_matches
+# Running as `python scripts/<name>.py` puts scripts/ on sys.path rather than the
+# repository root, so orderbot would not resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-CASES_PATH = Path("eval/rag_eval_cases.json")
+from orderbot.retriever import MIN_SIMILARITY, retrieve_policy_matches
+
+# Repo root, so paths below do not depend on the caller's working directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+CASES_PATH = REPO_ROOT / "eval" / "rag_eval_cases.json"
+
+# A query the seeded corpus must answer. Used to prove retrieval is actually
+# working before any case is scored.
+LIVENESS_QUERY = "what is the return window"
+LIVENESS_EXPECTED_DOC = "Returns Policy"
+
+
+def assert_retrieval_works() -> None:
+    """Fail fast when retrieval is broken rather than scoring it as a pass.
+
+    ``retrieve_policy_matches`` swallows every error and returns ``[]``, which
+    is indistinguishable from a legitimate no-match. Every negative case would
+    therefore "pass" during an outage, inflating no-match accuracy to 100%.
+    """
+    matches = retrieve_policy_matches(LIVENESS_QUERY)
+    if not matches:
+        raise SystemExit(
+            "Retrieval returned no results for the liveness query "
+            f'"{LIVENESS_QUERY}". Check that seed_knowledge.py has been run and that '
+            "Supabase and the embedding API are reachable; scoring now would be meaningless."
+        )
+    titles = {match.get("doc_title") for match in matches}
+    if LIVENESS_EXPECTED_DOC not in titles:
+        raise SystemExit(
+            f'Retrieval for "{LIVENESS_QUERY}" returned {sorted(titles)} but not '
+            f'"{LIVENESS_EXPECTED_DOC}". The corpus is missing or stale; re-run '
+            "seed_knowledge.py --reingest."
+        )
 
 
 def evaluate(cases: list[dict]) -> tuple[list[dict], dict[str, float | int]]:
@@ -40,6 +76,7 @@ def evaluate(cases: list[dict]) -> tuple[list[dict], dict[str, float | int]]:
 
 
 def main() -> None:
+    assert_retrieval_works()
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
     results, stats = evaluate(cases)
     print(f"RAG evaluation ({stats['cases']} cases, min similarity {MIN_SIMILARITY:.2f})")

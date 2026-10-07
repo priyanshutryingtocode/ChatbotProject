@@ -4,8 +4,8 @@ By default this script only writes a JSON file. Add --insert after reviewing the
 output to insert the generated records into Supabase.
 
 Examples:
-    python seed_orders.py --customers 100 --orders-per-customer 3
-    python seed_orders.py --customers 100 --orders-per-customer 3 --insert
+    python scripts/seed_orders.py --customers 100 --orders-per-customer 3
+    python scripts/seed_orders.py --customers 100 --orders-per-customer 3 --insert
 """
 
 import argparse
@@ -19,6 +19,20 @@ from pathlib import Path
 from dotenv import load_dotenv
 from faker import Faker
 
+# This script imports no project modules, so it only needs the repo root to
+# resolve its default output path regardless of the caller's directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+TABLES = (
+    "customers",
+    "customer_addresses",
+    "orders",
+    "order_delivery_addresses",
+    "order_items",
+    "shipments",
+    "order_events",
+    "payments",
+)
 STATUSES = ["Processing", "In Transit", "Out for Delivery", "Delivered", "Cancelled", "Failed Delivery"]
 STATUS_WEIGHTS = [12, 16, 8, 54, 6, 4]
 ITEMS = [
@@ -42,7 +56,7 @@ TIME_SLOTS = ["9 AM - 12 PM", "12 PM - 3 PM", "3 PM - 6 PM", "6 PM - 9 PM"]
 PRIORITIES = ["Standard", "Standard", "Standard", "Express", "Priority"]
 
 
-def normalized_phone(fake: Faker) -> str:
+def random_phone() -> str:
     """Return a realistic Indian 10-digit mobile number."""
     first_digit = random.choice("6789")
     remaining = "".join(random.choice("0123456789") for _ in range(9))
@@ -141,31 +155,18 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
     random.seed(seed)
     fake = Faker("en_IN")
     fake.seed_instance(seed)
-    records = {
-        table: []
-        for table in (
-            "customers",
-            "customer_addresses",
-            "orders",
-            "order_delivery_addresses",
-            "order_items",
-            "shipments",
-            "order_events",
-            "payments",
-        )
-    }
+    records = {table: [] for table in TABLES}
     for customer_number in range(customers):
         full_name = fake.name()
         customer_id = customer_number + 1
-        customer = {
-            "id": customer_id,
-            "customer_name": full_name,
-            "full_name": full_name,
-            "email": f"demo.{customer_number + 1}.{fake.user_name()}@example.test".lower(),
-            "phone": normalized_phone(fake),
-        }
-        customer.pop("customer_name")
-        records["customers"].append(customer)
+        records["customers"].append(
+            {
+                "id": customer_id,
+                "full_name": full_name,
+                "email": f"demo.{customer_number + 1}.{fake.user_name()}@example.test".lower(),
+                "phone": random_phone(),
+            }
+        )
         address = {
             "customer_id": customer_id,
             "label": "Home",
@@ -213,17 +214,7 @@ def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
     from supabase import create_client
 
     client = create_client(url, key)
-    insert_order = [
-        "customers",
-        "customer_addresses",
-        "orders",
-        "order_delivery_addresses",
-        "order_items",
-        "shipments",
-        "order_events",
-        "payments",
-    ]
-    for table in insert_order:
+    for table in TABLES:
         rows = records[table]
         for start in range(0, len(rows), batch_size):
             batch = rows[start : start + batch_size]
@@ -245,7 +236,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=20260819, help="Seed for reproducible data.")
     parser.add_argument(
-        "--output", type=Path, default=Path("data/normalized_fake_orders.json"), help="JSON output path."
+        "--output", type=Path, default=REPO_ROOT / "data" / "normalized_fake_orders.json", help="JSON output path."
     )
     parser.add_argument("--insert", action="store_true", help="Insert records into Supabase after writing JSON.")
     parser.add_argument("--batch-size", type=int, default=100, help="Supabase insert batch size (default: 100).")

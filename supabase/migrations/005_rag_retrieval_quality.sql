@@ -1,9 +1,13 @@
 -- Reject weak semantic matches rather than treating the nearest chunk as relevant.
+--
+-- min_similarity: Python (retriever.MIN_SIMILARITY) is authoritative and always
+-- passes this argument explicitly. The default below is only a fallback for
+-- ad-hoc SQL callers, so keep it in step with retriever.py.
 
 create or replace function match_knowledge_chunks(
     query_embedding vector(768),
     match_count int default 4,
-    min_similarity float default 0.45
+    min_similarity float default 0.6
 )
 returns table (
     chunk_id bigint,
