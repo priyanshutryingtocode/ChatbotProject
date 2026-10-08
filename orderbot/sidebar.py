@@ -19,9 +19,14 @@ from .database import (
 
 
 @st.cache_data(ttl=20, show_spinner=False)
-def _cached_recent_chats(limit: int = 10):
-    """Brief cache so the sidebar stops querying Supabase on every rerun."""
-    return list_conversations(limit)
+def _cached_recent_chats(session_id: str, limit: int = 10):
+    """Brief cache so the sidebar stops querying Supabase on every rerun.
+
+    `session_id` is part of the cache key on purpose. st.cache_data is scoped to
+    the process, not the session, so without it one visitor's conversations
+    would be served to the next.
+    """
+    return list_conversations(limit, session_id=session_id)
 
 
 def invalidate_recent_chats_cache() -> None:
@@ -65,14 +70,14 @@ def _on_recent_chat_change() -> None:
         st.session_state.resume_conversation_id = target_id
 
 
-def render_recent_chats() -> None:
-    """List recent conversations; picking one resumes it in the workspace.
+def render_recent_chats(session_id: str) -> None:
+    """List this session's recent conversations; picking one resumes it.
 
     Selection is event-driven (radio on_change) — never inferred by comparing
     displayed state against the current view on every rerun, so a deliberate
     fresh start can't be overridden by whatever the radio happens to show.
     """
-    conversations = _cached_recent_chats()
+    conversations = _cached_recent_chats(session_id)
     if not conversations:
         return
 
@@ -143,7 +148,7 @@ def render_manual_lookup_results() -> None:
                         st.markdown(f"- {format_event_line(event)}")
 
 
-def render_sidebar() -> None:
+def render_sidebar(session_id: str) -> None:
     with st.sidebar:
         st.header("Manual lookup")
         st.caption("Run a direct database search without using the assistant.")
@@ -168,6 +173,6 @@ def render_sidebar() -> None:
                 st.session_state.manual_lookup_label = f"Order {order_id} + {secondary.strip()}"
 
         render_manual_lookup_results()
-        render_recent_chats()
+        render_recent_chats(session_id)
 
         st.caption("Tip: use the chat for follow-up questions after an order is found.")

@@ -45,9 +45,45 @@ _ABORT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The only order fields written to the conversation log. Everything identifying
+# — customers (name, email, phone), shipments (tracking number, driver name),
+# order_items and order_events — is deliberately excluded. The assistant's
+# rendered reply already carries the customer-facing facts, so nothing is lost
+# from the transcript itself.
+_REDACTED_ORDER_FIELDS = (
+    "public_order_id",
+    "status",
+    "payment_status",
+    "currency",
+    "total_amount",
+    "ordered_at",
+)
+
+
+def redact_db_results(db_results: dict | None) -> dict:
+    """Strip personal data from a lookup result before it is stored.
+
+    Returns an empty dict when there is nothing worth keeping, so the column
+    stays null rather than holding an empty object.
+    """
+    if not db_results or not isinstance(db_results, dict):
+        return {}
+    matched = db_results.get("matched") or []
+    if not matched:
+        return {}
+    return {
+        "matched": [
+            {key: order.get(key) for key in _REDACTED_ORDER_FIELDS} for order in matched if isinstance(order, dict)
+        ]
+    }
+
 
 class OrderChatHandler:
-    def __init__(self, conversation_id: str | None = None):
+    def __init__(self, conversation_id: str | None = None, session_id: str | None = None):
+        # Identifies the browser session, not a person. Passed by main.py so the
+        # conversation it creates can be listed and reloaded by that same
+        # session only. See migration 006.
+        self.session_id = session_id
         self.llm = chatmodel()
         self.llm_with_tools = build_llm_with_tools()
         self.conversation_history = []
@@ -425,15 +461,26 @@ class OrderChatHandler:
         )
 
     def _persist_message(self, role: str, content: str, db_results: dict | None = None) -> None:
-        """Persist one turn to the conversation log. Never raises."""
+        """Persist one turn to the conversation log. Never raises.
+
+        db_results is redacted before storage: only the order's own
+        non-identifying fields are kept. The full row carries the customer's
+        name, email, phone, tracking number and delivery driver, and nothing
+        reads this column back, so storing it would be exposure with no benefit.
+        """
         self._ensure_conversation()
         if not self.conversation_id:
             return
-        append_message(self.conversation_id, "user" if role == "human" else role, content, db_results)
+        append_message(
+            self.conversation_id,
+            "user" if role == "human" else role,
+            content,
+            redact_db_results(db_results),
+        )
 
     def _ensure_conversation(self) -> None:
         if not self.conversation_id:
-            self.conversation_id = create_conversation()
+            self.conversation_id = create_conversation(session_id=self.session_id)
 
     def end_session(self) -> None:
         """Mark the current conversation as ended (best-effort)."""

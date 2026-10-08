@@ -109,13 +109,28 @@ def get_orders_by_phone(phone: str) -> list[dict]:
         return []
 
 
+def escape_like(value: str) -> str:
+    """Strip SQL LIKE metacharacters so a name is matched literally.
+
+    `ilike` is a SQL LIKE, so `%` and `_` are wildcards rather than literals.
+    Interpolating a user-supplied name into the pattern unescaped turned
+    "order 42 + name %" into "order 42 + any customer name", which defeats the
+    two-field verification. The backslash is removed too, so no escaping
+    sequence can survive to reintroduce a wildcard.
+    """
+    return re.sub(r"[\\%_]", "", value or "")
+
+
 def search_orders_by_name(name: str) -> list[dict]:
+    literal = escape_like(name).strip()
+    if not literal:
+        return []
     try:
         customers = (
             _client()
             .table("customers")
             .select("id")
-            .ilike("full_name", f"%{name.strip()}%")
+            .ilike("full_name", f"%{literal}%")
             .limit(MAX_ORDERS_PER_LOOKUP)
             .execute()
             .data
@@ -237,12 +252,21 @@ def format_order_for_display(order: dict | None) -> str:
     return "  \n".join(lines)
 
 
-def create_conversation(channel: str = "streamlit", customer_email: str | None = None) -> str:
-    """Create a conversation record and return its id. Best-effort, never raises."""
+def create_conversation(
+    channel: str = "streamlit", customer_email: str | None = None, session_id: str | None = None
+) -> str:
+    """Create a conversation record and return its id. Best-effort, never raises.
+
+    `session_id` scopes the conversation to the browser session that created it
+    (migration 006). Without one, a conversation is stored unscoped and invisible
+    to every session — the fail-closed outcome, since it matches no filter.
+    """
     try:
         row = {"channel": channel}
         if customer_email:
             row["customer_email"] = customer_email
+        if session_id:
+            row["session_id"] = session_id
         response = _client().table("conversations").insert(row).execute()
         return (response.data or [{}])[0].get("id", "")
     except Exception:
@@ -297,21 +321,51 @@ def end_conversation(conversation_id: str) -> None:
         logger.exception("Failed to end conversation")
 
 
-def list_conversations(limit: int = 10) -> list[dict]:
-    """Most recent conversations, newest first. Best-effort, never raises."""
+def list_conversations(limit: int = 10, session_id: str | None = None) -> list[dict]:
+    """Most recent conversations, newest first. Best-effort, never raises.
+
+    Pass `session_id` to return only that browser session's conversations.
+    Omitting it returns every conversation, which is only safe for callers that
+    are not user-facing — the sidebar must always scope.
+    """
     try:
-        response = (
+        query = (
             _client()
             .table("conversations")
             .select("id, channel, customer_email, created_at, ended_at")
             .order("created_at", desc=True)
             .limit(limit)
-            .execute()
         )
-        return response.data or []
+        if session_id:
+            query = query.eq("session_id", session_id)
+        return query.execute().data or []
     except Exception:
         logger.exception("Failed to list conversations")
         return []
+
+
+def conversation_belongs_to_session(conversation_id: str, session_id: str | None) -> bool:
+    """Whether a conversation was created by this browser session.
+
+    Guards the `?chat=` deep link and the recent-chats radio. Returns False for
+    an unscoped conversation (null session_id) so rows predating migration 006
+    stay unreachable.
+    """
+    if not conversation_id or not session_id:
+        return False
+    try:
+        response = (
+            _client()
+            .table("conversations")
+            .select("id")
+            .eq("id", conversation_id)
+            .eq("session_id", session_id)
+            .execute()
+        )
+        return bool(response.data)
+    except Exception:
+        logger.exception("Failed to check conversation ownership")
+        return False
 
 
 def get_order_timeline(order: dict | None) -> list[dict]:

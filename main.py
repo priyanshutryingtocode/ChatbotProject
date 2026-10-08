@@ -1,10 +1,11 @@
 import logging
 from pathlib import Path
+from uuid import uuid4
 
 import streamlit as st
 
 from orderbot.chat import OrderChatHandler
-from orderbot.database import get_messages
+from orderbot.database import conversation_belongs_to_session, get_messages
 from orderbot.sidebar import invalidate_recent_chats_cache, render_sidebar
 
 logger = logging.getLogger(__name__)
@@ -45,12 +46,47 @@ def apply_theme() -> None:
 FIRST_LOAD = "UNSET"
 
 
-def _load_conversation(conversation_id: str) -> None:
-    """Load an existing conversation."""
+def current_session_id() -> str:
+    """Stable id for this browser session, created on first use.
+
+    Used to scope stored conversations so one visitor cannot list or reload
+    another's (migration 006). This is a browser session, not a person: it stops
+    cross-visitor reads, it is not authentication.
+    """
+    session_id = st.session_state.get("session_id")
+
+    if not session_id:
+        session_id = str(uuid4())
+        st.session_state.session_id = session_id
+
+    return session_id
+
+
+def _start_new_handler() -> None:
+    st.session_state.chat_handler = OrderChatHandler(session_id=current_session_id())
+
+
+def _load_conversation(conversation_id: str) -> bool:
+    """Load a conversation this browser session owns. False if it does not.
+
+    Every entry point funnels through here — the recent-chats radio and the
+    `?chat=` query parameter — so the ownership check covers both. A rejected id
+    falls back to a fresh chat rather than raising.
+    """
+    if not conversation_belongs_to_session(conversation_id, current_session_id()):
+        logger.warning("Rejected load of conversation not owned by this session")
+        st.session_state.viewing_conversation_id = None
+        st.session_state.messages = []
+        _start_new_handler()
+        st.query_params.pop("chat", None)
+        return False
 
     st.session_state.viewing_conversation_id = conversation_id
 
-    st.session_state.chat_handler = OrderChatHandler(conversation_id=conversation_id)
+    st.session_state.chat_handler = OrderChatHandler(
+        conversation_id=conversation_id,
+        session_id=current_session_id(),
+    )
 
     st.session_state.messages = [
         {
@@ -62,6 +98,8 @@ def _load_conversation(conversation_id: str) -> None:
     ]
 
     st.query_params["chat"] = conversation_id
+
+    return True
 
 
 def initialize_session_state() -> None:
@@ -94,7 +132,7 @@ def initialize_session_state() -> None:
             st.session_state.viewing_conversation_id = None
 
             if st.session_state.chat_handler is None:
-                st.session_state.chat_handler = OrderChatHandler()
+                _start_new_handler()
 
     elif viewing is not None:
         handler = st.session_state.get("chat_handler")
@@ -122,8 +160,7 @@ def start_new_chat() -> None:
         None,
     )
 
-    if "chat" in st.query_params:
-        del st.query_params["chat"]
+    st.query_params.pop("chat", None)
 
 
 # ---------------------------------------------------------
@@ -248,9 +285,11 @@ def render_chat_interface() -> None:
 def main() -> None:
     apply_theme()
 
+    session_id = current_session_id()
+
     initialize_session_state()
 
-    render_sidebar()
+    render_sidebar(session_id)
 
     render_header()
 

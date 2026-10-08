@@ -28,14 +28,22 @@ database or model access, and `chat` sits above `tools`, `query`, `responses`,
 ## Features
 
 - **Two-field verification** — order number plus one identity detail, matched
-  across one message or several
+  across one message or several. Customer names are matched literally: `%` and
+  `_` are stripped rather than treated as wildcards, so a name can never stand
+  in for "any customer"
 - **Deterministic order facts** — statuses, tracking numbers and dates come from
   the database, never from the model
+- **No customer data at rest** — the conversation log keeps only order id,
+  status and amounts. Names, emails, phone numbers, tracking numbers and driver
+  names are never written, and conversations are purged after 30 days
 - **Policy answers via RAG** — returns, refunds, shipping, cancellations and
   damaged-item questions answered from vector-retrieved policy docs with source
   citations. Policies are public, so no verification is needed for them
 - **Quick lookup sidebar** — direct database search under the same two-field
-  rule, plus a resumable recent-chats list
+  rule, plus a recent-chats list showing only this browser session's
+  conversations. That scoping is by session, not by sign-in: it prevents one
+  visitor from reading another's history, but anyone holding a given session id
+  can still read that session. Real access control needs an authenticated owner.
 - **Streaming replies** — answers stream token-by-token, so the first words
   appear immediately
 
@@ -61,7 +69,7 @@ scripts/               CLI tooling, run as `python scripts/<name>.py`
   evaluate_rag.py        Retrieval evaluation
 eval/                  Retrieval evaluation cases
 knowledge/             Policy markdown ingested by seed_knowledge.py
-supabase/migrations/   Tracked migrations (002-005)
+supabase/migrations/   Tracked migrations (002-006; 006 hardens conversations)
 data/                  Generated seed data (gitignored)
 ```
 
@@ -86,9 +94,24 @@ data/                  Generated seed data (gitignored)
    `payments`, plus `conversations` and `messages` from migration `002`.
 
    Migration numbering starts at `002`; there is no `001` here, so a fresh clone
-   cannot provision the base schema on its own. Migrations `002`-`005` assume
+   cannot provision the base schema on its own. Migrations `002`-`006` assume
    the tables above already exist. Apply them in order after creating the base
    schema.
+
+   Migration `006` must be applied before running the app — it adds the
+   `session_id` column that stored conversations are scoped by, so lookups
+   against a database without it will fail. It also scrubs personal data already
+   stored in `messages.db_results`, adds a 30-day retention purge, and enables
+   row-level security on `conversations` and `messages`. Apply it in the
+   Supabase SQL editor:
+
+   ```sql
+   -- paste contents of supabase/migrations/006_conversation_hardening.sql
+   ```
+
+   RLS is enabled with no permissive policy, so only the service-role key can
+   read these tables. If you later point a browser client at this database
+   expecting it to read them, it will be denied — that is intended.
 
    Order numbers are public IDs in the range `0001`-`1000`.
 
