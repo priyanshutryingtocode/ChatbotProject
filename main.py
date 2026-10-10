@@ -83,9 +83,11 @@ def _load_conversation(conversation_id: str) -> bool:
 
     st.session_state.viewing_conversation_id = conversation_id
 
+    stored_messages = get_messages(conversation_id)
     st.session_state.chat_handler = OrderChatHandler(
         conversation_id=conversation_id,
         session_id=current_session_id(),
+        stored_messages=stored_messages,
     )
 
     st.session_state.messages = [
@@ -93,7 +95,7 @@ def _load_conversation(conversation_id: str) -> bool:
             "role": (message.get("role") if message.get("role") in ("user", "assistant") else "assistant"),
             "content": message.get("content", ""),
         }
-        for message in get_messages(conversation_id)
+        for message in stored_messages
         if message.get("content")
     ]
 
@@ -206,7 +208,8 @@ def render_chat_interface() -> None:
                     Track any order in seconds
                 </div>
                 <div class="welcome-text">
-                    Enter an order number with an email, phone number, or name.
+                    Enter an order number with the email, phone number, or name on the order.
+                    Name-only verification shares status and delivery timing.
                 </div>
             </div>
             """,
@@ -221,11 +224,37 @@ def render_chat_interface() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    pending_action = st.session_state.chat_handler.pending_action
+    if pending_action:
+        action_label = pending_action["action"].replace("_request", "").replace("_", " ").title()
+        st.warning(
+            f"Confirm {action_label.lower()} support request for order "
+            f"#{pending_action['order_id']:04d}. This sends a request for human review; it does not change the order."
+        )
+        st.write(f"Reason: {pending_action['reason']}")
+        st.caption(f"This confirmation expires at {pending_action['expires_at'].astimezone().strftime('%H:%M:%S')}.")
+        confirm_col, cancel_col = st.columns(2)
+        with confirm_col:
+            if st.button("Confirm request", key=f"confirm-action-{pending_action['request_key']}", type="primary"):
+                submitted, message = st.session_state.chat_handler.confirm_pending_action(
+                    pending_action["request_key"]
+                )
+                st.session_state.messages.append({"role": "assistant", "content": message})
+                (st.success if submitted else st.error)(message)
+                invalidate_recent_chats_cache()
+                st.rerun()
+        with cancel_col:
+            if st.button("Cancel request", key=f"cancel-action-{pending_action['request_key']}"):
+                st.session_state.chat_handler.discard_pending_action(pending_action["request_key"])
+                st.info("Request discarded.")
+                st.rerun()
+
     # -------------------------
     # Input
     # -------------------------
 
     prompt = st.chat_input("Ask about an order, customer, delivery, or payment status...")
+    st.caption("We keep a redacted chat transcript to resume conversations. Order and identity details are removed from saved messages.")
 
     if not prompt:
         return

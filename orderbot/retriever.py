@@ -9,8 +9,10 @@ a no-match answer instead of raising into the chat flow.
 
 import logging
 from functools import lru_cache
+from typing import Any
 
 from .config import GEMINI_API_KEY, supabase_server_client
+from .contracts import PolicyChunk, PolicySearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -112,31 +114,50 @@ def _match_chunks(embedding: list[float], k: int) -> list[dict]:
     return response.data or []
 
 
-def format_policy_context(matches: list[dict]) -> str | None:
-    """Format retrieved chunks as labelled source blocks for the prompt."""
-    if not matches:
-        return None
-    blocks = []
-    for match in matches:
-        heading = f" > {match['heading']}" if match.get("heading") else ""
-        content = (match.get("content") or "").strip()
-        blocks.append(f"[source: {match.get('doc_title', 'Unknown')}{heading}]\n{content}")
-    return "\n\n".join(blocks)
+def _retrieve_matches(query: str, k: int) -> list[dict[str, Any]]:
+    cleaned = (query or "").strip()
+    if not cleaned:
+        return []
+    embedding = _embed_query(cleaned)
+    return _match_chunks(embedding, k)
 
 
 def retrieve_policy_matches(query: str, k: int = DEFAULT_MATCH_COUNT) -> list[dict]:
     """Return score-qualified policy matches, or an empty list on no match/error."""
-    cleaned = (query or "").strip()
-    if not cleaned:
-        return []
     try:
-        embedding = _embed_query(cleaned)
-        return _match_chunks(embedding, k)
-    except Exception:
-        logger.exception("Policy retrieval failed")
+        return _retrieve_matches(query, k)
+    except Exception as exc:
+        logger.error("Policy retrieval failed (%s)", type(exc).__name__)
         return []
 
 
-def retrieve_policies(query: str, k: int = DEFAULT_MATCH_COUNT) -> str | None:
-    """Return formatted policy excerpts for a question, or None when nothing useful is found."""
-    return format_policy_context(retrieve_policy_matches(query, k))
+def search_policy_chunks(query: str, k: int = DEFAULT_MATCH_COUNT) -> PolicySearchResult:
+    """Return typed, source-labelled policy matches with distinct failure states."""
+    if not (query or "").strip():
+        return PolicySearchResult("no_match")
+    try:
+        matches = _retrieve_matches(query, k)
+    except Exception as exc:
+        logger.error("Policy retrieval failed (%s)", type(exc).__name__)
+        return PolicySearchResult("unavailable")
+
+    if not matches:
+        return PolicySearchResult("no_match")
+
+    chunks = [
+        PolicyChunk(
+            source_title=match.get("doc_title") or "Unknown",
+            heading=match.get("heading"),
+            content=(match.get("content") or "").strip(),
+            similarity=match.get("similarity"),
+        )
+        for match in matches
+        if (match.get("content") or "").strip()
+    ]
+    if not chunks:
+        return PolicySearchResult("no_match")
+
+    return PolicySearchResult(
+        "found",
+        chunks,
+    )

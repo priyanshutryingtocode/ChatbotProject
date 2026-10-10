@@ -6,16 +6,15 @@ import streamlit as st
 
 from .config import MAX_ORDER_ID, MIN_ORDER_ID
 from .database import (
-    build_criteria,
-    find_orders,
     format_event_line,
     format_order_for_display,
-    format_order_number,
     format_timestamp,
     get_order_timeline,
     list_conversations,
     normalize_phone,
+    order_summary,
 )
+from .orders import OrderCriteria, OrderLookup, lookup_order
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -54,12 +53,8 @@ def _validate_fields(order_id: str, email: str, phone: str, name: str) -> str | 
     return None
 
 
-def _run_lookup(order_id: str, email: str, phone: str, name: str) -> list[dict]:
-    criteria = build_criteria(order_id, email, phone, name)
-    try:
-        return find_orders(criteria, require_order_id=True)
-    except ValueError:
-        return []
+def _run_lookup(order_id: str, email: str, phone: str, name: str) -> OrderLookup:
+    return lookup_order(OrderCriteria(order_id, email, phone, name))
 
 
 def _on_recent_chat_change() -> None:
@@ -87,7 +82,7 @@ def render_recent_chats(session_id: str) -> None:
     options: dict[str, str] = {"-- select a chat --": ""}
     for convo in conversations:
         state_label = "ended" if convo.get("ended_at") else "active"
-        label = f"{format_timestamp(convo.get('created_at'))} - {state_label}"
+        label = f"{format_timestamp(convo.get('updated_at'))} - {state_label}"
         options[label] = convo["id"]
     st.session_state.recent_chat_options_map = options
 
@@ -108,6 +103,9 @@ def render_manual_lookup_results() -> None:
     results = st.session_state.manual_lookup_results
     label = st.session_state.get("manual_lookup_label", "Manual lookup")
     st.divider()
+    if st.session_state.get("manual_lookup_error"):
+        st.error(st.session_state.manual_lookup_error)
+        return
     if not results:
         st.warning(f"No orders found for {label}. Try a different lookup value.")
         return
@@ -123,29 +121,35 @@ def render_manual_lookup_results() -> None:
             st.rerun()
 
     for order in results:
-        shipment = (order.get("shipments") or [{}])[0]
         customer = order.get("customers") or {}
+        summary = order_summary(order)
+        name_only = st.session_state.get("manual_lookup_name_only", False)
         with st.container(border=True):
             header_col, total_col = st.columns([3, 2])
             with header_col:
-                st.markdown(f"**Order #{format_order_number(order.get('public_order_id'))}**")
-                st.caption(customer.get("full_name", "Customer unavailable"))
-            with total_col:
-                amount = float(order.get("total_amount") or 0)
-                st.metric("Total", f"{order.get('currency', 'USD')} {amount:,.2f}")
-            st.metric("Status", order.get("status", "Unknown"))
+                st.markdown(f"**Order #{summary['order_number']}**")
+                if not name_only:
+                    st.caption(customer.get("full_name", "Customer unavailable"))
+            if not name_only:
+                with total_col:
+                    amount = float(summary["total_amount"])
+                    st.metric("Total", f"{summary['currency']} {amount:,.2f}")
+            st.metric("Status", summary["status"])
 
-            delivery = shipment.get("delivered_at") or shipment.get("estimated_delivery_at")
+            delivery = summary["delivered_at"] or summary["estimated_delivery_at"]
             if delivery:
-                delivery_label = "Delivered" if shipment.get("delivered_at") else "Estimated delivery"
+                delivery_label = "Delivered" if summary["delivered_at"] else "Estimated delivery"
                 st.caption(f"{delivery_label}: {format_timestamp(delivery)}")
-            with st.expander("View complete order details"):
-                st.markdown(format_order_for_display(order))
-                timeline = get_order_timeline(order)
-                if timeline:
-                    st.markdown("**Event timeline**")
-                    for event in timeline:
-                        st.markdown(f"- {format_event_line(event)}")
+            if name_only:
+                st.caption("Name-only verification: status and delivery timing only.")
+            else:
+                with st.expander("View complete order details"):
+                    st.markdown(format_order_for_display(order))
+                    timeline = get_order_timeline(order)
+                    if timeline:
+                        st.markdown("**Event timeline**")
+                        for event in timeline:
+                            st.markdown(f"- {format_event_line(event)}")
 
 
 def render_sidebar(session_id: str) -> None:
@@ -165,11 +169,20 @@ def render_sidebar(session_id: str) -> None:
             validation_error = _validate_fields(order_id, email, phone, name)
             if validation_error:
                 st.session_state.pop("manual_lookup_results", None)
+                st.session_state.pop("manual_lookup_error", None)
                 st.error(validation_error)
             else:
                 secondary = next((value for value in (email, phone, name) if value.strip()), "")
                 with st.spinner("Searching orders..."):
-                    st.session_state.manual_lookup_results = _run_lookup(order_id, email, phone, name)
+                    result = _run_lookup(order_id, email, phone, name)
+                if result.status == "unavailable":
+                    st.session_state.manual_lookup_results = []
+                    st.session_state.manual_lookup_error = "Order lookup is temporarily unavailable. Please try again."
+                    st.session_state.manual_lookup_name_only = False
+                else:
+                    st.session_state.pop("manual_lookup_error", None)
+                    st.session_state.manual_lookup_results = result.orders if result.status == "found" else []
+                    st.session_state.manual_lookup_name_only = result.name_only
                 st.session_state.manual_lookup_label = f"Order {order_id} + {secondary.strip()}"
 
         render_manual_lookup_results()

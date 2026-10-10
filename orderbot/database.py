@@ -8,14 +8,18 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from .config import supabase_server_client
+from .config import MAX_ORDER_ID, MIN_ORDER_ID, supabase_server_client
 
 IST = timezone(timedelta(hours=5, minutes=30))
 logger = logging.getLogger(__name__)
-MAX_ORDERS_PER_LOOKUP = 20
 
-# Only columns the app actually reads. Every extra column is paid for on each
-# lookup, and a verified lookup can run up to four of these queries.
+
+class DatabaseLookupError(RuntimeError):
+    """The lookup could not reach or query the order database."""
+
+
+# Only columns the app actually reads. Identity filters are applied to the
+# embedded customer relation in the same request as the order lookup.
 ORDER_SELECT = """
     public_order_id, status, payment_status, currency, total_amount, ordered_at,
     customers!inner(full_name, email, phone),
@@ -31,6 +35,29 @@ def format_order_number(order_id: int | str | None) -> str:
         return f"{int(order_id):04d}"
     except (TypeError, ValueError):
         return "N/A"
+
+
+def related_one(value: dict | list | None) -> dict:
+    """Normalize a PostgREST to-one relation returned as an object or array."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0]
+    return {}
+
+
+def order_summary(order: dict) -> dict:
+    """Shared order facts used by the sidebar and customer-facing replies."""
+    shipment = related_one(order.get("shipments"))
+    return {
+        "order_number": format_order_number(order.get("public_order_id")),
+        "status": order.get("status", "Unknown"),
+        "payment_status": order.get("payment_status", "N/A"),
+        "currency": order.get("currency", "USD"),
+        "total_amount": order.get("total_amount") or 0,
+        "estimated_delivery_at": shipment.get("estimated_delivery_at"),
+        "delivered_at": shipment.get("delivered_at"),
+    }
 
 
 def format_timestamp(timestamp: str | None) -> str:
@@ -52,41 +79,15 @@ def _client():
     return supabase_server_client()
 
 
-def _orders_for_customer_ids(customer_ids: list[str]) -> list[dict]:
-    if not customer_ids:
-        return []
-    response = (
-        _client()
-        .table("orders")
-        .select(ORDER_SELECT)
-        .in_("customer_id", customer_ids)
-        .order("ordered_at", desc=True)
-        .limit(MAX_ORDERS_PER_LOOKUP)
-        .execute()
-    )
-    return response.data or []
-
-
-def get_order_by_id(order_id: int | str) -> dict | None:
+def validate_order_id(order_id: int | str) -> int:
+    """Parse an order ID and enforce the public 1..1000 range."""
     try:
-        response = (
-            _client().table("orders").select(ORDER_SELECT).eq("public_order_id", int(order_id)).limit(1).execute()
-        )
-        return response.data[0] if response.data else None
-    except (TypeError, ValueError):
-        return None
-    except Exception:
-        logger.exception("Database error in get_order_by_id")
-        return None
-
-
-def get_orders_by_email(email: str) -> list[dict]:
-    try:
-        customers = _client().table("customers").select("id").eq("email", email.strip().lower()).execute().data or []
-        return _orders_for_customer_ids([customer["id"] for customer in customers])
-    except Exception:
-        logger.exception("Database error in get_orders_by_email")
-        return []
+        normalized_id = int(order_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Order ID must be an integer.") from exc
+    if not MIN_ORDER_ID <= normalized_id <= MAX_ORDER_ID:
+        raise ValueError(f"Order ID must be between {MIN_ORDER_ID} and {MAX_ORDER_ID}.")
+    return normalized_id
 
 
 def normalize_phone(phone: str | None) -> str:
@@ -99,16 +100,6 @@ def normalize_phone(phone: str | None) -> str:
     return digits[-10:]
 
 
-def get_orders_by_phone(phone: str) -> list[dict]:
-    try:
-        normalized_phone = normalize_phone(phone)
-        customers = _client().table("customers").select("id").eq("phone", normalized_phone).execute().data or []
-        return _orders_for_customer_ids([customer["id"] for customer in customers])
-    except Exception:
-        logger.exception("Database error in get_orders_by_phone")
-        return []
-
-
 def escape_like(value: str) -> str:
     """Strip SQL LIKE metacharacters so a name is matched literally.
 
@@ -119,27 +110,6 @@ def escape_like(value: str) -> str:
     sequence can survive to reintroduce a wildcard.
     """
     return re.sub(r"[\\%_]", "", value or "")
-
-
-def search_orders_by_name(name: str) -> list[dict]:
-    literal = escape_like(name).strip()
-    if not literal:
-        return []
-    try:
-        customers = (
-            _client()
-            .table("customers")
-            .select("id")
-            .ilike("full_name", f"%{literal}%")
-            .limit(MAX_ORDERS_PER_LOOKUP)
-            .execute()
-            .data
-            or []
-        )
-        return _orders_for_customer_ids([customer["id"] for customer in customers])
-    except Exception:
-        logger.exception("Database error in search_orders_by_name")
-        return []
 
 
 def build_criteria(order_id=None, email="", phone="", name="") -> dict:
@@ -157,7 +127,7 @@ def build_criteria(order_id=None, email="", phone="", name="") -> dict:
     return criteria
 
 
-def find_orders(criteria: dict, require_order_id: bool = True) -> list[dict]:
+def find_orders(criteria: dict) -> list[dict]:
     """Return orders matching all provided identity fields.
 
     Requires an order ID plus at least one of email, phone, or name. An order
@@ -169,34 +139,28 @@ def find_orders(criteria: dict, require_order_id: bool = True) -> list[dict]:
     provided = {key: str(value).strip() if value is not None else "" for key, value in criteria.items()}
     provided = {key: value for key, value in provided.items() if value}
 
-    if require_order_id and "order_id" not in provided:
+    if "order_id" not in provided:
         raise ValueError("An order number is required to look up an order.")
+    if "order_id" in provided:
+        provided["order_id"] = str(validate_order_id(provided["order_id"]))
     if len(provided) < 2:
         raise ValueError("Two identity fields are required to look up an order.")
 
-    result_sets: dict[str, list[dict]] = {}
-    if "order_id" in provided:
-        order = get_order_by_id(provided["order_id"])
-        result_sets["order_id"] = [order] if order else []
-    if "email" in provided:
-        result_sets["email"] = get_orders_by_email(provided["email"])
-    if "phone" in provided:
-        result_sets["phone"] = get_orders_by_phone(provided["phone"])
-    if "name" in provided:
-        result_sets["name"] = search_orders_by_name(provided["name"])
-
-    if any(not orders for orders in result_sets.values()):
-        return []
-
-    first_key = next(iter(result_sets))
-    common_ids = {order["public_order_id"] for order in result_sets[first_key]}
-    for orders in result_sets.values():
-        common_ids &= {order["public_order_id"] for order in orders}
-    if not common_ids:
-        return []
-
-    by_id = {order["public_order_id"]: order for order in result_sets[first_key]}
-    return [by_id[order_id] for order_id in sorted(common_ids)]
+    try:
+        query = _client().table("orders").select(ORDER_SELECT).eq("public_order_id", int(provided["order_id"]))
+        if "email" in provided:
+            query = query.eq("customers.email", provided["email"].lower())
+        if "phone" in provided:
+            query = query.eq("customers.phone", normalize_phone(provided["phone"]))
+        if "name" in provided:
+            literal = escape_like(provided["name"]).strip()
+            if not literal:
+                return []
+            query = query.ilike("customers.full_name", f"%{literal}%")
+        return query.execute().data or []
+    except Exception:
+        logger.exception("Database error in find_orders")
+        raise DatabaseLookupError("Order lookup failed.") from None
 
 
 def _event_sort_key(event: dict):
@@ -219,18 +183,19 @@ def format_order_for_display(order: dict | None) -> str:
     if not order:
         return "No order data available"
 
-    customer = order.get("customers") or {}
-    shipment = (order.get("shipments") or [{}])[0]
+    customer = related_one(order.get("customers"))
+    shipment = related_one(order.get("shipments"))
+    summary = order_summary(order)
     items = order.get("order_items") or []
     event_history = sorted(order.get("order_events") or [], key=_event_sort_key, reverse=True)
 
     lines = [
-        f"**Order #{format_order_number(order.get('public_order_id'))}**",
-        f"Status: {order.get('status', 'N/A')}",
+        f"**Order #{summary['order_number']}**",
+        f"Status: {summary['status']}",
         f"Customer: {customer.get('full_name', 'N/A')}",
         f"Ordered: {format_timestamp(order.get('ordered_at'))}",
-        f"Payment: {order.get('payment_status', 'N/A')}",
-        f"Total: {order.get('currency', 'USD')} {float(order.get('total_amount') or 0):.2f}",
+        f"Payment: {summary['payment_status']}",
+        f"Total: {summary['currency']} {float(summary['total_amount']):.2f}",
     ]
     if customer.get("email"):
         lines.append(f"Email: {customer['email']}")
@@ -242,19 +207,17 @@ def format_order_for_display(order: dict | None) -> str:
         lines.append(f"Tracking: {shipment['tracking_number']} ({shipment.get('carrier', 'N/A')})")
     if shipment.get("delivery_driver_name"):
         lines.append(f"Driver: {shipment['delivery_driver_name']}")
-    if shipment.get("estimated_delivery_at"):
-        lines.append(f"Estimated Delivery: {format_timestamp(shipment['estimated_delivery_at'])}")
-    if shipment.get("delivered_at"):
-        lines.append(f"Delivered: {format_timestamp(shipment['delivered_at'])}")
+    if summary["estimated_delivery_at"]:
+        lines.append(f"Estimated Delivery: {format_timestamp(summary['estimated_delivery_at'])}")
+    if summary["delivered_at"]:
+        lines.append(f"Delivered: {format_timestamp(summary['delivered_at'])}")
     if event_history:
         latest = event_history[0]
         lines.append(f"Latest Update: {latest.get('event_type', 'N/A')} - {format_timestamp(latest.get('event_at'))}")
     return "  \n".join(lines)
 
 
-def create_conversation(
-    channel: str = "streamlit", customer_email: str | None = None, session_id: str | None = None
-) -> str:
+def create_conversation(channel: str = "streamlit", session_id: str | None = None) -> str:
     """Create a conversation record and return its id. Best-effort, never raises.
 
     `session_id` scopes the conversation to the browser session that created it
@@ -263,8 +226,6 @@ def create_conversation(
     """
     try:
         row = {"channel": channel}
-        if customer_email:
-            row["customer_email"] = customer_email
         if session_id:
             row["session_id"] = session_id
         response = _client().table("conversations").insert(row).execute()
@@ -274,14 +235,12 @@ def create_conversation(
         return ""
 
 
-def append_message(conversation_id: str, role: str, content: str, db_results: dict | None = None) -> str:
+def append_message(conversation_id: str, role: str, content: str) -> str:
     """Store one chat message. Returns the new message id ("" if it failed)."""
     if not conversation_id:
         return ""
     try:
         row = {"conversation_id": conversation_id, "role": role, "content": content}
-        if db_results:
-            row["db_results"] = db_results
         response = _client().table("messages").insert(row).execute()
         return (response.data or [{}])[0].get("id", "")
     except Exception:
@@ -290,20 +249,20 @@ def append_message(conversation_id: str, role: str, content: str, db_results: di
 
 
 def get_messages(conversation_id: str, limit: int = 50) -> list[dict]:
-    """Return stored messages for a conversation, oldest first."""
+    """Return the latest stored messages for a conversation, oldest first."""
     if not conversation_id:
         return []
     try:
         response = (
             _client()
             .table("messages")
-            .select("id, role, content, db_results, created_at")
+            .select("id, role, content, message_seq, created_at")
             .eq("conversation_id", conversation_id)
-            .order("created_at", desc=False)
+            .order("message_seq", desc=True)
             .limit(limit)
             .execute()
         )
-        return response.data or []
+        return list(reversed(response.data or []))
     except Exception:
         logger.exception("Failed to load messages")
         return []
@@ -332,8 +291,8 @@ def list_conversations(limit: int = 10, session_id: str | None = None) -> list[d
         query = (
             _client()
             .table("conversations")
-            .select("id, channel, customer_email, created_at, ended_at")
-            .order("created_at", desc=True)
+            .select("id, channel, created_at, updated_at, ended_at")
+            .order("updated_at", desc=True)
             .limit(limit)
         )
         if session_id:

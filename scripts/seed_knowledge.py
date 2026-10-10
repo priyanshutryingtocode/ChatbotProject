@@ -28,13 +28,14 @@ from dotenv import load_dotenv
 # repository root, so orderbot would not resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from orderbot.retriever import embed_texts
+from orderbot.retriever import EMBEDDING_MODEL, embed_texts
 
 # Repo root, so the default --dir does not depend on the caller's directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 MAX_CHARS = 600
 OVERLAP_CHARS = 120
+CHUNKER_VERSION = "markdown-v1"
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 
@@ -118,15 +119,32 @@ def doc_title(path: Path, text: str) -> str:
 def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
     documents_ingested = 0
     total_chunks = 0
-    for path in sorted(knowledge_dir.glob("*.md")):
+    source_directory = (
+        "knowledge" if knowledge_dir.resolve() == (REPO_ROOT / "knowledge").resolve() else str(knowledge_dir.resolve())
+    )
+    source_files = sorted(knowledge_dir.glob("*.md"))
+    active_source_files = {path.name for path in source_files}
+    for path in source_files:
         text = path.read_text(encoding="utf-8")
         title = doc_title(path, text)
         digest = file_hash(path)
 
         existing = (
-            client.table("knowledge_documents").select("id, content_hash").eq("title", title).execute().data or []
+            client.table("knowledge_documents")
+            .select("id, content_hash, embedding_model, chunker_version")
+            .eq("source_directory", source_directory)
+            .eq("source_file", path.name)
+            .execute()
+            .data
+            or []
         )
-        if existing and existing[0].get("content_hash") == digest and not reingest:
+        if (
+            existing
+            and existing[0].get("content_hash") == digest
+            and existing[0].get("embedding_model") == EMBEDDING_MODEL
+            and existing[0].get("chunker_version") == CHUNKER_VERSION
+            and not reingest
+        ):
             print(f"Skipping '{title}' (unchanged).")
             continue
 
@@ -152,6 +170,9 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
             {
                 "p_title": title,
                 "p_source_file": path.name,
+                "p_source_directory": source_directory,
+                "p_embedding_model": EMBEDDING_MODEL,
+                "p_chunker_version": CHUNKER_VERSION,
                 "p_content_hash": digest,
                 "p_chunks": rows,
             },
@@ -160,6 +181,20 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
         documents_ingested += 1
         total_chunks += len(rows)
         print(f"Ingested '{title}': {len(rows)} chunks.")
+
+    stored_documents = (
+        client.table("knowledge_documents")
+        .select("id, source_file")
+        .eq("source_directory", source_directory)
+        .execute()
+        .data
+        or []
+    )
+    for document in stored_documents:
+        if document.get("source_file") not in active_source_files:
+            client.table("knowledge_documents").delete().eq("id", document["id"]).execute()
+            print(f"Removed stale policy document '{document.get('source_file', 'Unknown')}'.")
+
     return documents_ingested, total_chunks
 
 
