@@ -1,6 +1,6 @@
 import re
 
-from .database import related_one
+from .database import format_timestamp, related_one
 
 
 def format_database_context(db_results, query=None, fields=None):
@@ -120,9 +120,9 @@ def _context_field_lines(order):
     items = order.get("order_items") or []
     delivery_lines = []
     if shipment.get("estimated_delivery_at"):
-        delivery_lines.append(f"Estimated delivery: {shipment['estimated_delivery_at']}")
+        delivery_lines.append(f"Estimated delivery: {format_timestamp(shipment['estimated_delivery_at'])}")
     if shipment.get("delivered_at"):
-        delivery_lines.append(f"Delivered at: {shipment['delivered_at']}")
+        delivery_lines.append(f"Delivered at: {format_timestamp(shipment['delivered_at'])}")
     if not delivery_lines:
         delivery_lines.append("Delivery estimate: Not available")
     return {

@@ -55,6 +55,26 @@ def test_policy_no_match_discards_untrusted_model_claim():
     assert "couldn't find a relevant policy" in answer
 
 
+def test_agent_stream_accepts_block_list_content_without_join_type_error():
+    handler = make_handler()
+    answer = run_agent_output(
+        handler,
+        "What is the return policy?",
+        [
+            AIMessageChunk(
+                content=[
+                    {"type": "text", "text": "Returns may be eligible under the policy."},
+                    {"type": "image", "url": "ignored"},
+                ]
+            ),
+            ToolMessage(content='{"status":"no_match"}', tool_call_id="policy-1", name="search_policies"),
+        ],
+    )
+
+    assert "couldn't find a relevant policy" in answer
+    assert "eligible" not in answer
+
+
 def test_policy_outage_discards_model_claim():
     handler = make_handler()
     answer = run_agent_output(
@@ -70,7 +90,7 @@ def test_policy_outage_discards_model_claim():
     assert "temporarily unavailable" in answer
 
 
-def test_policy_success_adds_source_title_and_heading():
+def test_policy_success_uses_retrieved_excerpt_and_cites_source():
     handler = make_handler()
     answer = run_agent_output(
         handler,
@@ -79,7 +99,16 @@ def test_policy_success_adds_source_title_and_heading():
             AIMessageChunk(content="The policy allows eligible returns."),
             ToolMessage(
                 content=json.dumps(
-                    {"status": "found", "chunks": [{"source_title": "Returns", "heading": "Eligibility"}]}
+                    {
+                        "status": "found",
+                        "chunks": [
+                            {
+                                "source_title": "Returns",
+                                "heading": "Eligibility",
+                                "content": "Returns are accepted for eligible items within the return window.",
+                            }
+                        ],
+                    }
                 ),
                 tool_call_id="policy-1",
                 name="search_policies",
@@ -87,8 +116,45 @@ def test_policy_success_adds_source_title_and_heading():
         ],
     )
 
-    assert "eligible returns" in answer
+    assert "Returns are accepted for eligible items within the return window." in answer
     assert "**Sources:** Returns > Eligibility" in answer
+
+
+def test_refund_policy_question_is_not_replaced_with_order_verification_prompt():
+    handler = make_handler()
+    answer = run_agent_output(
+        handler,
+        "What is your return and refund policy?",
+        [
+            AIMessageChunk(content="I need two details to verify your order before sharing policy details."),
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "found",
+                        "chunks": [
+                            {
+                                "source_title": "Refunds Policy",
+                                "heading": "Refund method",
+                                "content": "Refunds are issued to the original payment method.",
+                            },
+                            {
+                                "source_title": "Returns Policy",
+                                "heading": "Return window",
+                                "content": "Eligible items may be returned within 14 days.",
+                            },
+                        ],
+                    }
+                ),
+                tool_call_id="policy-1",
+                name="search_policies",
+            ),
+        ],
+    )
+
+    assert "Refunds are issued to the original payment method." in answer
+    assert "Eligible items may be returned within 14 days." in answer
+    assert "two details to verify" not in answer
+    assert "**Sources:**" in answer
 
 
 def test_policy_question_without_policy_tool_call_returns_no_match():

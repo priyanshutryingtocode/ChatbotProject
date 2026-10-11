@@ -67,6 +67,7 @@ def format_timestamp(timestamp: str | None) -> str:
     try:
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
+            # Database timestamps without an offset are stored as UTC.
             parsed = parsed.replace(tzinfo=timezone.utc)
         parsed = parsed.astimezone(IST)
         hour = parsed.strftime("%I").lstrip("0") or "0"

@@ -5,7 +5,7 @@ from uuid import uuid4
 import streamlit as st
 
 from orderbot.chat import OrderChatHandler
-from orderbot.database import conversation_belongs_to_session, get_messages
+from orderbot.database import conversation_belongs_to_session, format_timestamp, get_messages, get_order_timeline, order_summary
 from orderbot.sidebar import invalidate_recent_chats_cache, render_sidebar
 
 logger = logging.getLogger(__name__)
@@ -171,22 +171,131 @@ def start_new_chat() -> None:
 
 
 def render_header() -> None:
-    left, right = st.columns(
-        [4, 1],
-        vertical_alignment="center",
-    )
-
-    with left:
+    brand, actions = st.columns([5, 1], vertical_alignment="center")
+    with brand:
         st.markdown(
-            "### Order Status Assistant",
+            """
+            <div class="app-brand">
+                <div class="brand-mark">OS</div>
+                <div><div class="brand-name">Order support</div>
+                <div class="brand-caption">Order help, clearly handled</div></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
+    with actions:
+        st.button("New conversation", on_click=start_new_chat, use_container_width=True)
+    st.markdown('<div class="app-header-rule"></div>', unsafe_allow_html=True)
 
-    with right:
-        st.button(
-            "New chat",
-            on_click=start_new_chat,
-            use_container_width=True,
-        )
+
+def _queue_prompt(prompt: str) -> None:
+    st.session_state.suggested_prompt = prompt
+
+
+def render_welcome() -> None:
+    st.markdown(
+        """
+        <section class="welcome-panel">
+            <div class="welcome-eyebrow">CUSTOMER CARE</div>
+            <div class="welcome-title">How can we help with your order?</div>
+            <div class="welcome-text">Get a verified update, find an answer in our help policies,
+            or tell us what went wrong. Your order details stay private.</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    prompts = [
+        ("01", "Check an order", "Status, delivery estimate, or tracking", "I want to check an order", "Start order check"),
+        ("02", "Delivery issue", "A delivery is late or marked delivered", "I have a problem with my delivery", "Get delivery help"),
+        ("03", "Returns & refunds", "Find the relevant policy", "What is your return and refund policy?", "Browse policies"),
+    ]
+    columns = st.columns(3, gap="medium")
+    for column, (icon, title, description, prompt, action_label) in zip(columns, prompts):
+        with column:
+            with st.container(border=True):
+                st.markdown(f'<div class="quick-icon">{icon}</div>', unsafe_allow_html=True)
+                st.markdown(f"**{title}**")
+                st.caption(description)
+                st.button(
+                    action_label,
+                    key=f"quick-start-{title}",
+                    use_container_width=True,
+                    on_click=_queue_prompt,
+                    args=(prompt,),
+                )
+    st.caption("For an order lookup, we’ll ask for the order number and a matching email, phone number, or name.")
+
+
+def render_verified_order() -> None:
+    handler = st.session_state.chat_handler
+    orders = (handler.last_db_results or {}).get("matched") or []
+    if not orders:
+        return
+
+    st.markdown("#### Your verified order" if len(orders) == 1 else "#### Matching orders")
+    for order in orders:
+        summary = order_summary(order)
+        shipment_time = summary["delivered_at"] or summary["estimated_delivery_at"]
+        shipment_label = "Delivered" if summary["delivered_at"] else "Estimated delivery"
+
+        with st.container(border=True):
+            identity_col, status_col, delivery_col = st.columns([1.3, 1, 1.4], vertical_alignment="center")
+            with identity_col:
+                st.caption("ORDER")
+                st.markdown(f"### #{summary['order_number']}")
+            with status_col:
+                st.caption("CURRENT STATUS")
+                st.markdown(f"**{summary['status']}**")
+            with delivery_col:
+                st.caption(shipment_label.upper() if shipment_time else "DELIVERY")
+                st.markdown(f"**{format_timestamp(shipment_time) if shipment_time else 'No estimate available'}**")
+
+            if not handler.name_only_verified:
+                timeline = get_order_timeline(order)
+                if timeline:
+                    with st.expander(f"View activity for order #{summary['order_number']}"):
+                        for event in timeline[-4:]:
+                            event_label = (event.get("event_type") or "Update").replace("_", " ").title()
+                            st.markdown(f"**{event_label}** · {format_timestamp(event.get('event_at'))}")
+
+
+def render_pending_action() -> None:
+    pending_action = st.session_state.chat_handler.pending_action
+    if not pending_action:
+        return
+
+    action_label = pending_action["action"].replace("_request", "").replace("_", " ").title()
+    st.markdown("#### Review your support request")
+    with st.container(border=True):
+        st.markdown(f"**{action_label} · Order #{pending_action['order_id']:04d}**")
+        st.caption("This submits a request for a support agent to review. It does not change your order.")
+        st.markdown(f"**Reason**\n\n{pending_action['reason']}")
+        expires_at = pending_action["expires_at"].astimezone()
+        st.caption(f"Confirmation expires at {expires_at.strftime('%I:%M %p').lstrip('0')} local time.")
+        confirm_col, cancel_col = st.columns(2)
+        with confirm_col:
+            if st.button(
+                "Submit support request",
+                key=f"confirm-action-{pending_action['request_key']}",
+                type="primary",
+                use_container_width=True,
+            ):
+                submitted, message = st.session_state.chat_handler.confirm_pending_action(
+                    pending_action["request_key"]
+                )
+                st.session_state.messages.append({"role": "assistant", "content": message})
+                (st.success if submitted else st.error)(message)
+                invalidate_recent_chats_cache()
+                st.rerun()
+        with cancel_col:
+            if st.button(
+                "Discard request",
+                key=f"cancel-action-{pending_action['request_key']}",
+                use_container_width=True,
+            ):
+                st.session_state.chat_handler.discard_pending_action(pending_action["request_key"])
+                st.info("Request discarded.")
+                st.rerun()
 
 
 # ---------------------------------------------------------
@@ -200,60 +309,28 @@ def render_chat_interface() -> None:
     # -------------------------
 
     if not st.session_state.messages:
-        st.markdown(
-            """
-            <div class="welcome">
-                <div class="welcome-icon">Order support</div>
-                <div class="welcome-title">
-                    Track any order in seconds
-                </div>
-                <div class="welcome-text">
-                    Enter an order number with the email, phone number, or name on the order.
-                    Name-only verification shares status and delivery timing.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        render_welcome()
+
+    render_verified_order()
 
     # -------------------------
     # Existing messages
     # -------------------------
 
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
+        avatar = ":material/support_agent:" if message["role"] == "assistant" else ":material/person:"
+        with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
 
-    pending_action = st.session_state.chat_handler.pending_action
-    if pending_action:
-        action_label = pending_action["action"].replace("_request", "").replace("_", " ").title()
-        st.warning(
-            f"Confirm {action_label.lower()} support request for order "
-            f"#{pending_action['order_id']:04d}. This sends a request for human review; it does not change the order."
-        )
-        st.write(f"Reason: {pending_action['reason']}")
-        st.caption(f"This confirmation expires at {pending_action['expires_at'].astimezone().strftime('%H:%M:%S')}.")
-        confirm_col, cancel_col = st.columns(2)
-        with confirm_col:
-            if st.button("Confirm request", key=f"confirm-action-{pending_action['request_key']}", type="primary"):
-                submitted, message = st.session_state.chat_handler.confirm_pending_action(
-                    pending_action["request_key"]
-                )
-                st.session_state.messages.append({"role": "assistant", "content": message})
-                (st.success if submitted else st.error)(message)
-                invalidate_recent_chats_cache()
-                st.rerun()
-        with cancel_col:
-            if st.button("Cancel request", key=f"cancel-action-{pending_action['request_key']}"):
-                st.session_state.chat_handler.discard_pending_action(pending_action["request_key"])
-                st.info("Request discarded.")
-                st.rerun()
+    render_pending_action()
 
     # -------------------------
     # Input
     # -------------------------
 
-    prompt = st.chat_input("Ask about an order, customer, delivery, or payment status...")
+    prompt = st.chat_input("Ask about an order or how we can help...")
+    if not prompt:
+        prompt = st.session_state.pop("suggested_prompt", None)
     st.caption("We keep a redacted chat transcript to resume conversations. Order and identity details are removed from saved messages.")
 
     if not prompt:
@@ -270,14 +347,14 @@ def render_chat_interface() -> None:
         }
     )
 
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=":material/person:"):
         st.markdown(prompt)
 
     # -------------------------
     # Assistant response
     # -------------------------
 
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=":material/support_agent:"):
         try:
             response = st.write_stream(st.session_state.chat_handler.stream_response(prompt))
 

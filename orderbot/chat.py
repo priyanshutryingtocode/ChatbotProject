@@ -31,6 +31,43 @@ from .tools import format_order_lookup_payload
 
 logger = logging.getLogger(__name__)
 
+
+def _message_text(content) -> str:
+    """Extract displayable text from LangChain's string or block-list content."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    text_parts = []
+    for block in content:
+        if isinstance(block, str):
+            text_parts.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            text_parts.append(block["text"])
+    return "".join(text_parts)
+
+
+def _format_policy_excerpts(chunks: list[dict]) -> str:
+    """Render public policy answers from retrieved text, not model prose."""
+    sections = []
+    for chunk in chunks[:4]:
+        content = chunk.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        excerpt = content.strip()
+        if len(excerpt) > 1200:
+            excerpt = excerpt[:1199].rsplit(" ", 1)[0].rstrip() + "…"
+        heading = chunk.get("heading")
+        if heading:
+            sections.append(f"**{heading}**\n\n{excerpt}")
+        else:
+            sections.append(excerpt)
+    if not sections:
+        return "I found policy references but couldn't read their text. Please contact support to confirm the current policy."
+    return "Here are the relevant excerpts from our help documents:\n\n" + "\n\n---\n\n".join(sections)
+
+
 # An explicit bail-out mid-verification ("never mind", "skip", "forget it").
 #
 # Matched with fullmatch(), not search(): a message that merely *contains* an
@@ -496,7 +533,7 @@ class OrderChatHandler:
                         except (TypeError, ValueError):
                             continue
                         continue
-                    piece = getattr(chunk, "content", "") or ""
+                    piece = _message_text(getattr(chunk, "content", ""))
                     if piece:
                         pieces.append(piece)
                 full = "".join(pieces)
@@ -521,7 +558,9 @@ class OrderChatHandler:
                         if status == "unavailable"
                         else "I couldn't find a relevant policy in the available help documents. Please contact support to confirm the current policy."
                     )
-                elif self._is_order_inquiry(user_input) and not order_result:
+                elif policy_only and policy_result and policy_result.get("status") == "found":
+                    full = _format_policy_excerpts(policy_result.get("chunks") or [])
+                elif self._is_order_inquiry(user_input) and not order_result and not policy_only:
                     full = self._two_field_prompt()
                 elif order_result and order_result.get("status") != "found":
                     status = order_result.get("status")
@@ -667,7 +706,7 @@ class OrderChatHandler:
         def _gen():
             pieces = []
             for chunk in chain.stream({}):
-                piece = getattr(chunk, "content", "") or ""
+                piece = _message_text(getattr(chunk, "content", ""))
                 if piece:
                     pieces.append(piece)
                     yield piece

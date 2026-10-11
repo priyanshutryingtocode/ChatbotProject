@@ -226,11 +226,13 @@ Supabase integration run was made.
 
 ## Step 4 — Add safe, confirmed action workflows
 
-Status: implementation in progress. Return and cancellation tools create only a
+Status: implementation complete. Return and cancellation tools create only a
 short-lived in-memory request for human review. No order status changes or
 database writes occur until the customer explicitly confirms in Streamlit.
 Automated eligibility is disabled because no approved business rules or order
-management integration exist. Migration 009 is drafted but has not been applied.
+management integration exist. Migration 009 is reported as applied by the
+project owner; deployment state and end-to-end persistence still need a safe
+staging smoke check.
 
 ### 4.1 Define actions before coding
 
@@ -273,7 +275,8 @@ management integration exist. Migration 009 is drafted but has not been applied.
    raw reason or customer information.
 4. [x] Keep action-request tools separate from commit operations. Only the
    confirmation callback can call the commit service. Persistence fails closed
-   until migration 009 is applied.
+   until migration 009 is applied. (The project owner has since reported it
+   applied; verify via staging before relying on persistence.)
 
 **Exit gate:** unverified, name-only verified, ineligible, unconfirmed,
 expired-confirmation, modified-argument, duplicate, and DB-error cases produce
@@ -340,7 +343,137 @@ focused groups.
   mutation or durable support ticket needs an authenticated customer/staff
   identity and an appropriate access-control model.
 - Action-request retention, staff ownership, notification, and an operator
-  review interface are not defined or implemented. Migration 009 has not been
-  applied; confirmed submission will fail closed until it is applied.
+  review interface are not defined or implemented. Migration 009 is reported
+  applied; verify the schema and confirmed submission in staging.
 - Supabase schema changes require a separately approved, disposable-database
   validation before production rollout.
+
+## Next initiative — UI and product experience expansion
+
+Status: in progress. The first visible UI pass adds a support landing area,
+quick-start actions, stronger product header styling, and a main-page verified
+order summary with an activity timeline for strongly verified orders. The
+existing sidebar lookup and recent chats remain. Keep the Streamlit and
+Supabase stack and implement the remaining phases incrementally.
+
+### Phase UI-0 — Confirm current behavior and UX boundaries
+
+1. [ ] Run the app locally against a safe staging configuration and record the
+   current screen sizes, navigation, chat states, order lookup behavior, and
+   action-request lifecycle. Do not print secrets or customer data.
+2. [ ] Confirm migration 009's deployed schema and exercise one disposable
+   confirmed request in staging; verify duplicate handling and user-visible
+   DB-error behavior. Do not use production data for this check.
+3. [ ] Define customer-facing versus staff-facing capabilities. Do not present
+   a browser session as an authenticated customer or staff identity.
+
+**Exit gate:** current flows and staging dependencies are known; no production
+write or identity assumption is introduced.
+
+### Phase UI-1 — Establish the app shell and visual system
+
+Progress: initial header, welcome panel, quick-start cards, responsive CSS,
+shared design tokens, consistent chat icons, and a structured support-request
+review card are implemented. Validate visually at desktop and mobile widths
+before closing this phase.
+
+1. [ ] Replace the generic header/welcome area with clear product identity,
+   concise support scope, and an obvious new-conversation action.
+2. [ ] Define shared spacing, typography, color, button, panel, status, and
+   focus styles in `static/app.css`; retain the current dark theme unless a
+   paired theme option proves useful.
+3. [ ] Make the layout work on narrow and wide screens. Keep order lookup and
+   recent conversations easy to find without forcing the sidebar open on
+   small screens.
+4. [ ] Replace emoji-dependent status cues with consistent text labels and
+   accessible icons/indicators; preserve visible keyboard focus and contrast.
+
+**Exit gate:** the page has a consistent responsive shell, clear hierarchy,
+accessible controls, and no core workflow depends on hover or color alone.
+
+### Phase UI-2 — Make order lookup a clear order workspace
+
+Progress: verified order summary cards now appear in the main view after a
+successful lookup; strongly verified orders can expand a short activity
+timeline. Sidebar copy now describes the customer task directly. Remaining
+validation/error-state polish is still in scope.
+
+1. [ ] Move the manual lookup into a compact, clearly labelled order-search
+   panel with inline validation, verification guidance, loading, no-match, and
+   service-unavailable states.
+2. [ ] Show a successful result as an order summary card: order number, status,
+   last update, and one consistently formatted IST delivery time.
+3. [ ] Present shipment/order events as a chronological timeline with dates,
+   source/status labels, and clear empty states. Do not show sensitive fields
+   for name-only verification.
+4. [ ] Allow a verified order to remain visible beside its chat follow-ups;
+   provide a clear way to clear or replace the selected order.
+
+**Exit gate:** lookup, name-only limits, timeline ordering, and all loading/error
+states are understandable and use the existing shared order service.
+
+### Phase UI-3 — Make the assistant grounded and legible
+
+1. [ ] Add suggested starter prompts for order status, delivery issues, and
+   public policies; keep them as ordinary user messages handled by existing
+   routing.
+2. [ ] Show concise progress states for verification, policy retrieval, and
+   response generation without exposing raw tool arguments or internal traces.
+3. [ ] Render policy citations as compact source/heading details and distinguish
+   retrieved answers from no-match and retrieval-unavailable states.
+4. [ ] Use deterministic order facts for status, timestamps, and delivery
+   discrepancies. Avoid unsupported advice, relative date paraphrases, or
+   promises that staff have taken action.
+5. [ ] Improve chat readability: message spacing, long-message wrapping,
+   timestamp/source affordances where useful, and a stable input area on mobile.
+
+**Exit gate:** policy sources are visible, order facts remain deterministic,
+and agent progress/errors are useful without leaking implementation details.
+
+### Phase UI-4 — Polish human confirmation and request lifecycle
+
+1. [ ] Present staged return/cancellation requests in a dedicated review card
+   that states the action, order, bounded reason, expiry, and that submission
+   requests human review rather than changing the order.
+2. [ ] Make confirm and discard controls visually distinct and keyboard
+   accessible. Prevent stale or already-submitted requests from appearing
+   actionable after reruns.
+3. [ ] Show explicit submitted, duplicate, expired, and failed-to-save states
+   based on the persistence result; never announce success before the DB confirms.
+4. [ ] Add a customer-visible request reference/status only if the schema and
+   authorization model support a safe lookup. Do not expose other requests by
+   order number alone.
+
+**Exit gate:** each action request has clear review, confirmation, cancellation,
+success, and failure states, with server-side verification and idempotency
+unchanged.
+
+### Phase UI-5 — Add staff review only after identity and ownership design
+
+1. [ ] Decide staff authentication, role permissions, assignment, retention,
+   notifications, and request-resolution states before building staff screens.
+2. [ ] Add a separate staff review surface only after authenticated access and
+   row-level authorization are in place; browser-session IDs are insufficient.
+3. [ ] Support safe queue filtering, request details with minimized PII,
+   assignment, notes, resolution, and an auditable status history if approved.
+4. [ ] Keep the customer-facing assistant from claiming a request was reviewed
+   or resolved until that state is persisted by an authorized staff workflow.
+
+**Exit gate:** staff can act only as an authenticated, authorized identity and
+all state transitions are auditable and tested.
+
+### Phase UI-6 — Review, accessibility, and release readiness
+
+1. [ ] Add UI/service tests for lookup states, name-only display, policy source
+   rendering, timestamp consistency, confirmation lifecycle, and DB failures.
+2. [ ] Check keyboard-only navigation, screen-reader labels, contrast, mobile
+   widths, long text, and Streamlit rerun behavior.
+3. [ ] Run the full test suite and a staging smoke test using synthetic data;
+   capture screenshots for the welcome, verified order, cited policy, pending
+   action, submitted action, and failure states.
+4. [ ] Update `ReadMe.md` with the revised user journeys and deployment
+   prerequisites. Keep schema application and production rollout separately
+   controlled.
+
+**Exit gate:** acceptance checks pass in tests and staging, no secrets or live
+customer PII appear in artifacts, and rollout risks are documented.

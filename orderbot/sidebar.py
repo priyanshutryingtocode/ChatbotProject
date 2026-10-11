@@ -77,7 +77,7 @@ def render_recent_chats(session_id: str) -> None:
         return
 
     st.divider()
-    st.header("Recent chats")
+    st.header("Recent conversations")
 
     options: dict[str, str] = {"-- select a chat --": ""}
     for convo in conversations:
@@ -154,8 +154,8 @@ def render_manual_lookup_results() -> None:
 
 def render_sidebar(session_id: str) -> None:
     with st.sidebar:
-        st.header("Manual lookup")
-        st.caption("Run a direct database search without using the assistant.")
+        st.header("Find an order")
+        st.caption("Verify with an order number and one matching detail.")
 
         with st.form("manual_lookup_form", clear_on_submit=False):
             order_id = f"{st.number_input('Order number', min_value=MIN_ORDER_ID, max_value=MAX_ORDER_ID, value=MIN_ORDER_ID, step=1, format='%04d', key='lookup_order_number'):04d}"
@@ -163,7 +163,7 @@ def render_sidebar(session_id: str) -> None:
             email = st.text_input("Email address (optional)", placeholder="you@example.com", key="lookup_email")
             phone = st.text_input("Phone number (optional)", placeholder="10-digit number", key="lookup_phone")
             name = st.text_input("Customer name (optional)", placeholder="Full or partial name", key="lookup_name")
-            submitted = st.form_submit_button("Search orders", use_container_width=True, type="primary")
+            submitted = st.form_submit_button("Find order", use_container_width=True, type="primary")
 
         if submitted:
             validation_error = _validate_fields(order_id, email, phone, name)

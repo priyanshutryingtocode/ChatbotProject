@@ -30,6 +30,15 @@ from .routing import ORDER_REFUND_STATUS_RE
 _WH = r"who|whom|which|what"
 
 _INTENTS = (
+    (
+        "delivery_issue",
+        re.compile(
+            r"\b(?:i|we)\s+(?:(?:have|has|do|did)\s+not|haven't|havent|hasn't|hasnt|"
+            r"don't|dont|didn't|didnt)\s+(?:yet\s+)?(?:receive(?:d)?|get|got|find|see|locate)\b|"
+            r"\b(?:package|parcel|order)\s+(?:never\s+)?(?:arrived|received)\b",
+            re.I,
+        ),
+    ),
     # An identity question about delivery. The topic is optional because the
     # wh-word alone is enough once a verified order is in context: "by whom?"
     # names no delivery noun but can only mean the driver.
@@ -199,6 +208,27 @@ def format_order_follow_up(orders: list[dict], name_only: bool, user_input: str)
         return (
             "I can't change an order myself. Please contact customer support and they'll be able to "
             "arrange cancellation, return, or any other change for you."
+        )
+
+    if intent == "delivery_issue":
+        status = summary["status"]
+        if status == "Delivered":
+            delivered = shipment.get("delivered_at")
+            delivered_text = f" on {format_timestamp(delivered)}" if delivered else ""
+            return (
+                f"Our system shows order #{order_number} as delivered{delivered_text}. "
+                "If you haven't received it, please contact customer support to report the delivery discrepancy. "
+                "I can't verify who received it or start an investigation from this chat."
+            )
+        estimated = shipment.get("estimated_delivery_at")
+        if estimated and status == "Out for Delivery":
+            return (
+                f"Order #{order_number} is still marked Out for Delivery, with an estimated delivery of "
+                f"{format_timestamp(estimated)}. If it does not arrive, please contact customer support."
+            )
+        return (
+            f"The latest status for order #{order_number} is **{status}**. "
+            "Please contact customer support for help locating the package."
         )
 
     if intent == "driver":

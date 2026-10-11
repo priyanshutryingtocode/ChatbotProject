@@ -1,24 +1,45 @@
+:root {
+    color-scheme: dark;
+    --app-bg: #0d1118;
+    --surface: #151b25;
+    --surface-raised: #1a2230;
+    --surface-subtle: #111720;
+    --border: #293344;
+    --border-strong: #3a4659;
+    --text: #edf1f7;
+    --muted: #a0aaba;
+    --quiet: #778396;
+    --accent: #f39a59;
+    --accent-hover: #ffad70;
+    --accent-ink: #1b1b20;
+    --success: #68c59b;
+    --warning: #e8bd70;
+    --danger: #ef7c7c;
+    --radius-sm: 9px;
+    --radius-md: 13px;
+    --radius-lg: 18px;
+    --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.14);
+}
 
-/* =========================
-   PAGE
-   ========================= */
+* {
+    box-sizing: border-box;
+}
 
-.stApp {
-    background: #0f1117;
+.stApp,
+[data-testid="stAppViewContainer"] {
+    background: var(--app-bg);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 [data-testid="stHeader"] {
     background: transparent;
-    pointer-events: none;
 }
 
-[data-testid="stHeader"] * {
-    pointer-events: auto;
-}
-
-[data-testid="stHeader"] [data-testid="stToolbar"] {
+[data-testid="stHeader"] [data-testid="stToolbar"],
+#MainMenu,
+footer {
     visibility: hidden;
-    pointer-events: none;
 }
 
 [data-testid="stSidebarCollapsedControl"],
@@ -30,196 +51,308 @@ button[kind="headerNoPadding"] {
     z-index: 9999 !important;
 }
 
-#MainMenu,
-footer {
-    visibility: hidden;
+[data-testid="stMainBlockContainer"] {
+    max-width: 1060px;
+    padding: 1.4rem 2rem 2.2rem;
 }
 
-
-/* =========================
-   MAIN CONTENT
-   ========================= */
-
-.block-container {
-    max-width: 900px !important;
-    margin: 0 auto !important;
-    padding-top: 1.5rem !important;
-    padding-bottom: 2rem !important;
+h1, h2, h3, h4 {
+    color: var(--text);
+    letter-spacing: -0.025em;
 }
 
-
-/* =========================
-   HEADER
-   ========================= */
-
-.brand-title {
-    font-size: 1.4rem;
-    font-weight: 600;
-    margin: 0;
+p, li {
+    color: var(--text);
+    line-height: 1.62;
 }
 
+small, [data-testid="stCaptionContainer"] {
+    color: var(--muted);
+}
 
-/* =========================
-   CHAT MESSAGES
-   ========================= */
+/* Brand and page hierarchy */
+.app-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.2rem 0 0.9rem;
+}
 
+.brand-mark {
+    display: grid;
+    place-items: center;
+    width: 2.65rem;
+    height: 2.65rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0.85rem;
+    background: linear-gradient(145deg, #ffad70, #eb7541);
+    box-shadow: 0 5px 16px rgba(235, 117, 65, 0.16);
+    color: var(--accent-ink);
+    font-size: 0.88rem;
+    font-weight: 800;
+    letter-spacing: -0.06em;
+}
+
+.brand-name {
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.brand-caption {
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.app-header-rule {
+    height: 1px;
+    margin: 0.2rem 0 1.5rem;
+    background: var(--border);
+}
+
+/* Surfaces and cards */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: var(--border) !important;
+    border-radius: var(--radius-md) !important;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+}
+
+[data-testid="stExpander"] {
+    border-color: var(--border) !important;
+    border-radius: var(--radius-sm) !important;
+    background: var(--surface-subtle);
+}
+
+[data-testid="stMetric"] {
+    padding: 0.5rem 0;
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--muted) !important;
+    font-size: 0.7rem !important;
+    font-weight: 650;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--text);
+    font-weight: 700;
+}
+
+/* Welcome and quick actions */
+.welcome-panel {
+    padding: 1.7rem 0 1rem;
+}
+
+.welcome-eyebrow {
+    margin-bottom: 0.65rem;
+    color: var(--accent);
+    font-size: 0.7rem;
+    font-weight: 750;
+    letter-spacing: 0.15em;
+}
+
+.welcome-panel .welcome-title {
+    max-width: 720px;
+    margin-bottom: 0.75rem;
+    color: var(--text);
+    font-size: clamp(1.9rem, 4vw, 2.65rem);
+    font-weight: 720;
+    letter-spacing: -0.045em;
+    line-height: 1.1;
+}
+
+.welcome-panel .welcome-text {
+    max-width: 680px;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.65;
+}
+
+.quick-icon {
+    display: grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    margin-bottom: 0.8rem;
+    border: 1px solid rgba(243, 154, 89, 0.24);
+    border-radius: 0.7rem;
+    background: rgba(243, 154, 89, 0.09);
+    color: var(--accent);
+    font-size: 0.75rem;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+}
+
+/* Chat transcript */
 [data-testid="stChatMessage"] {
-    background: #1a1f2b;
-    border: 1px solid #262c3a;
-    border-radius: 12px;
+    margin: 0 0 0.95rem;
     padding: 1rem 1.1rem;
-    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
 }
 
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p:last-child {
+    margin-bottom: 0;
+}
 
-/* =========================
-   CHAT INPUT
-   ========================= */
+[data-testid="stChatMessageAvatar"] {
+    color: var(--accent);
+}
+
+/* Inputs and buttons */
+div[data-testid="stButton"] > button,
+div[data-testid="stFormSubmitButton"] > button {
+    min-height: 2.55rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-weight: 620;
+    transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+div[data-testid="stButton"] > button:hover,
+div[data-testid="stFormSubmitButton"] > button:hover {
+    border-color: var(--accent);
+    background: #222b39;
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+div[data-testid="stButton"] > button:focus-visible,
+div[data-testid="stFormSubmitButton"] > button:focus-visible,
+[data-testid="stChatInput"] textarea:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--accent) !important;
+    outline-offset: 2px;
+}
+
+div[data-testid="stBaseButton-primary"] > button,
+button[kind="primary"] {
+    border-color: var(--accent) !important;
+    background: var(--accent) !important;
+    color: var(--accent-ink) !important;
+    font-weight: 720;
+}
+
+div[data-testid="stBaseButton-primary"] > button:hover,
+button[kind="primary"]:hover {
+    border-color: var(--accent-hover) !important;
+    background: var(--accent-hover) !important;
+}
 
 [data-testid="stChatInput"] {
-    max-width: 900px;
+    max-width: 100%;
     margin: 0 auto;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface) !important;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
 }
 
 [data-testid="stChatInput"] > div {
+    border: 0 !important;
     background: transparent !important;
-    border: none !important;
     box-shadow: none !important;
-    padding: 0 !important;
 }
 
 [data-testid="stChatInput"] textarea,
 [data-testid="stChatInput"] [contenteditable="true"] {
-    background: #1a1f2b !important;
-    border: 1px solid #2a3140 !important;
-    border-radius: 14px !important;
-    padding: 0.75rem 1rem !important;
+    min-height: 2.7rem;
+    border: 0 !important;
+    border-radius: var(--radius-md) !important;
+    background: transparent !important;
+    color: var(--text) !important;
     box-shadow: none !important;
-    outline: none !important;
-
-    /* Single-line horizontal input */
-    white-space: nowrap !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    resize: none !important;
-
-    /* Hide scrollbar */
-    scrollbar-width: none !important;
-}
-
-[data-testid="stChatInput"] textarea::-webkit-scrollbar {
-    display: none !important;
-}
-
-/* Keep the exact same appearance when focused */
-[data-testid="stChatInput"] textarea:focus,
-[data-testid="stChatInput"] textarea:focus-visible,
-[data-testid="stChatInput"]:focus-within,
-[data-testid="stChatInput"]:focus-within textarea {
-    background: #1a1f2b !important;
-    border: 1px solid #2a3140 !important;
-    box-shadow: none !important;
-    outline: none !important;
+    white-space: pre-wrap !important;
+    resize: vertical !important;
 }
 
 [data-testid="stChatInput"] textarea::placeholder {
-    color: #6b7280;
+    color: var(--quiet) !important;
 }
-
-
-/* =========================
-   SEND BUTTON
-   ========================= */
 
 [data-testid="stChatInputSubmitButton"] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-    color: #9aa2b1 !important;
+    color: var(--accent) !important;
 }
 
-[data-testid="stChatInputSubmitButton"]:hover,
-[data-testid="stChatInputSubmitButton"]:focus,
-[data-testid="stChatInputSubmitButton"]:focus-visible,
-[data-testid="stChatInputSubmitButton"]:active {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
-    color: #9aa2b1 !important;
-}
-
-[data-testid="stChatInputSubmitButton"][disabled] {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    color: #6b7280 !important;
-}
-
-
-/* =========================
-   WELCOME SCREEN
-   ========================= */
-
-.welcome {
-    text-align: center;
-    margin-top: 18vh;
-    margin-bottom: 4vh;
-}
-
-.welcome-icon {
-    font-size: 2.5rem;
-    margin-bottom: 0.5rem;
-}
-
-.welcome-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #f0f2f6;
-    margin-bottom: 0.5rem;
-}
-
-.welcome-text {
-    color: #8b93a3;
-    font-size: 0.95rem;
-}
-
-
-/* =========================
-   SIDEBAR
-   ========================= */
-
+/* Sidebar workspace */
 [data-testid="stSidebar"] {
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    border-right: 1px solid var(--border);
+    background: #10151d;
 }
 
 [data-testid="stSidebarContent"] {
-    padding-top: 1rem;
+    padding: 1rem 0.9rem 1.5rem;
 }
 
+[data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
-    font-size: 0.78rem;
-    letter-spacing: 0.08em;
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: #8b93a3;
-    margin: 0 0 0.35rem;
 }
 
 [data-testid="stSidebar"] [data-testid="stTextInput"] input,
 [data-testid="stSidebar"] [data-testid="stNumberInput"] input {
-    font-size: 0.85rem;
-    padding: 0.3rem 0.5rem;
+    min-height: 2.45rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface-subtle);
+    color: var(--text);
+}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    color: var(--muted);
 }
 
 .lookup-panel-title {
+    margin: 0 0 0.35rem;
+    color: var(--text);
     font-size: 0.78rem;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #8b93a3;
-    margin: 0 0 0.35rem;
+}
+
+/* Status and notices */
+[data-testid="stAlert"] {
+    border-radius: var(--radius-sm);
+}
+
+hr {
+    border-color: var(--border) !important;
+}
+
+@media (max-width: 760px) {
+    [data-testid="stMainBlockContainer"] {
+        padding: 1rem 0.85rem 1.5rem;
+    }
+
+    .welcome-panel {
+        padding-top: 0.8rem;
+    }
+
+    .app-header-rule {
+        margin-bottom: 1rem;
+    }
+
+    [data-testid="stChatMessage"] {
+        padding: 0.85rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+    }
 }
