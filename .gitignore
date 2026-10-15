@@ -3,10 +3,8 @@
 __pycache__/
 /data
 *.pyc
-
-# knowledge/ is tracked: it is the source-of-truth input to seed_knowledge.py.
-# .streamlit/config.toml is tracked so the dark theme survives a fresh clone,
-# but credentials must never be committed (see 7705e07 for what happened last
-# time). Keep the secrets file ignored explicitly.
 .secrets.toml
 .streamlit/secrets.toml
+supabase
+tests
+ORDER_OPERATIONS_API.md

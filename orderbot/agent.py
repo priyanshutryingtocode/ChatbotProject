@@ -1,7 +1,6 @@
 """LangChain agent construction for the read-only customer assistant."""
 
 from langchain.agents import create_agent
-
 from .config import SYSTEM_PROMPT, chatmodel
 from .tools import get_order_status, search_policies
 

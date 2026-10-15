@@ -30,3 +30,27 @@ and usually appear within the timelines above, without any action needed.
 
 Support can confirm the exact refund status using your order number plus one
 identity detail such as your registered email or phone number.
+
+## Common refund questions
+
+**Can a refund go to a different card or account?** Refunds go to the original
+payment method. An alternate account or card is not accepted. Cash-on-delivery
+refunds are the exception: the customer nominates a bank account during the
+return request.
+
+**How long does a refund take?** After approval, UPI and wallet refunds take
+24–48 hours. Card and net-banking refunds take 5–7 business days, depending on
+the bank. Cash-on-delivery refunds to the nominated bank account take 5–7
+business days after approval.
+
+**When does the refund clock start?** The return must pass the warehouse
+quality check; the timeline does not start when the carrier picks up the
+parcel. Funds may take additional time to appear after the refund is triggered.
+
+**Is the original delivery fee refunded?** It is refunded in full for a
+return caused by a damaged, defective, or incorrect item. It is not refunded
+for a change-of-mind return. See the Returns Policy for return-pickup charges.
+
+**How are cancellations refunded?** An order cancelled while still Processing
+is refunded automatically. The refund usually follows the applicable timelines
+above and does not require a separate refund request.

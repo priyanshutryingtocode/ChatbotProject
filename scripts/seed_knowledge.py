@@ -21,21 +21,20 @@ import os
 import re
 import sys
 from pathlib import Path
-
 from dotenv import load_dotenv
 
-# Running as `python scripts/<name>.py` puts scripts/ on sys.path rather than the
-# repository root, so orderbot would not resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orderbot.retriever import EMBEDDING_MODEL, embed_texts
 
-# Repo root, so the default --dir does not depend on the caller's directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 MAX_CHARS = 600
+
 OVERLAP_CHARS = 120
-CHUNKER_VERSION = "markdown-v1"
+
+CHUNKER_VERSION = "markdown-v2"
+
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 
@@ -67,6 +66,7 @@ def chunk_markdown(text: str) -> list[tuple[str | None, str]]:
     """Split Markdown by heading and paragraph with overlap between chunks."""
     sections: list[tuple[str | None, list[str]]] = []
     heading: str | None = None
+    heading_stack: list[tuple[int, str]] = []
     lines: list[str] = []
 
     def finish_section() -> None:
@@ -79,7 +79,10 @@ def chunk_markdown(text: str) -> list[tuple[str | None, str]]:
         if match:
             finish_section()
             lines = []
-            heading = match.group(2).strip()
+            level = len(match.group(1))
+            heading_stack = [(depth, title) for depth, title in heading_stack if depth < level]
+            heading_stack.append((level, match.group(2).strip()))
+            heading = " > ".join(title for _depth, title in heading_stack)
         else:
             lines.append(line)
     finish_section()
@@ -94,8 +97,6 @@ def chunk_markdown(text: str) -> list[tuple[str | None, str]]:
                     chunks.append((section_heading, buffer))
                     overlap = _tail_for_overlap(buffer)
                     with_overlap = f"{overlap}\n\n{part}".strip()
-                    # A large following paragraph may leave no room for the
-                    # overlap; preserve the size guarantee in that case.
                     buffer = with_overlap if len(with_overlap) <= MAX_CHARS else part
                 else:
                     buffer = candidate
@@ -148,12 +149,8 @@ def ingest(client, knowledge_dir: Path, reingest: bool) -> tuple[int, int]:
             print(f"Skipping '{title}' (unchanged).")
             continue
 
-        # Prepare embeddings before changing database state. The RPC below
-        # replaces the document metadata and chunks in one transaction.
         chunks = chunk_markdown(text)
 
-        # Embed title and heading with each body so retrieval retains the
-        # document context even when body language is generic.
         contents = [f"{title}\n{heading or ''}\n{body}".strip() for heading, body in chunks]
         vectors = embed_texts(contents) if contents else []
         rows = [
@@ -223,7 +220,7 @@ def main() -> None:
     if not args.dir.exists():
         raise FileNotFoundError(f"Knowledge directory not found: {args.dir}")
 
-    client = create_client(url, key)
+    client = create_client(url, key).schema("order_support")
     documents, chunks = ingest(client, args.dir, args.reingest)
     print(f"Done: {documents} document(s), {chunks} chunk(s) embedded.")
 

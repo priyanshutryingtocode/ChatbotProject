@@ -28,3 +28,24 @@ stock a full refund including shipping is issued instead.
 
 For low-value damaged items (under ₹999) we usually do not require the item to
 be shipped back — support confirms disposal instructions during the request.
+
+## Common damaged-item questions
+
+**How long do I have to report damage or a wrong item?** Report it within 48
+hours of delivery. Reports made later are handled under the standard 30-day
+return policy.
+
+**What should I send to support?** Have the order number, one matching
+identity detail (email, phone, or name), and photos of the item, packaging,
+and shipping label ready.
+
+**What happens if the item is confirmed damaged?** You can choose a free
+replacement with priority handling or a full refund that includes the original
+shipping fee.
+
+**What happens if I received the wrong item?** It is replaced at no cost. If
+the replacement is out of stock, a full refund including shipping is issued.
+
+**Do I have to ship back a low-value damaged item?** For a damaged item under
+₹999, return shipment is usually not required. Support confirms disposal
+instructions during the request.

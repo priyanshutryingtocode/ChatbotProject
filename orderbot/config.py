@@ -1,26 +1,23 @@
 import os
 from functools import lru_cache
-
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-
 from supabase import Client, create_client
 
 load_dotenv()
 
-# Setup
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# The public order-number range. Every entry point validates against this.
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+
 MIN_ORDER_ID = 1
+
 MAX_ORDER_ID = 1000
 
-# Single source of truth for what each status means. The system prompt is
-# generated from this dict, so the prompt and the deterministic replies
-# cannot drift apart.
 STATUS_EXPLANATIONS = {
     "Processing": "Order received, being processed.",
     "In Transit": "Order dispatched, in transit.",
@@ -32,7 +29,6 @@ STATUS_EXPLANATIONS = {
 
 _STATUS_GLOSSARY = "\n".join(f"- {status}: {meaning}" for status, meaning in STATUS_EXPLANATIONS.items())
 
-# System prompt for the assistant
 SYSTEM_PROMPT = f"""You are a professional Order Status Assistant. You help customers with order questions using the verified order lookup tool and answer public policy questions using the policy search tool.
 
 Order information is only shared after a customer verifies with BOTH:
@@ -51,7 +47,10 @@ When responding:
 - Do not claim an order was found, give a delivery date, or provide a tracking number unless that exact field is present in DATABASE RESULTS.
 - Delivery timestamps in DATABASE RESULTS are already formatted in IST. Repeat the timestamp exactly as written; never convert its timezone or describe it as today, tomorrow, or another relative date.
 - If a date or time is not available, say so plainly instead of estimating it.
-- For cancellation or return requests, use the matching request tool only after strong email or phone verification. The tool stages a support request for explicit confirmation; never claim the order itself was changed.
+- For cancellation, return, or delivery-investigation requests, use the matching request tool only after strong email or phone verification. The tool stages a support request for explicit confirmation; never claim the order itself was changed.
+- For any other customer request that requires staff help, use create_support_request with a concise, user-derived topic, summary, and relevant details. Do not restrict support requests to a preset topic list. Ask a clarifying question when the request is unclear, and do not create a request just because the user asks for information.
+- Include an order ID in a general support request only when the user identifies an order and the server has recently verified that order. Account-level requests can omit the order ID.
+- Every request tool stages a draft only. The customer must review and confirm it before it is saved for staff; never claim that staff has received an unconfirmed draft.
 - Explain order status meanings when relevant
 
 Public policies:
@@ -94,3 +93,8 @@ def supabase_server_client() -> Client:
             "Add the service-role key only to the server's .env file."
         )
     return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+
+def order_support_client():
+    """Return a server client whose PostgREST requests target this app's schema."""
+    return supabase_server_client().schema("order_support")

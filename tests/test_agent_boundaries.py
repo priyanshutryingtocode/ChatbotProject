@@ -6,7 +6,8 @@ import pytest
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from orderbot.chat import OrderChatHandler
-from orderbot.privacy import ORDER_REPLY_PLACEHOLDER, VERIFICATION_PLACEHOLDER
+from orderbot.contracts import PolicySearchResult
+from orderbot.privacy import VERIFICATION_PLACEHOLDER
 
 
 def make_handler(history=None):
@@ -17,10 +18,21 @@ def make_handler(history=None):
         return OrderChatHandler(stored_messages=[])
 
 
+def test_new_purchase_intent_points_to_request_form_without_claiming_order_placement():
+    handler = make_handler()
+
+    response, _ = handler._route_message("I want to buy a backpack")
+
+    assert "Request a new order form" in response
+    assert "does not place an order or take payment" in response
+    handler.agent.invoke.assert_not_called()
+
+
 def run_agent_output(handler, user_text, messages):
-    handler.agent.stream.return_value = [(message, {}) for message in messages]
-    response, _ = handler._run_tool_lookup(user_text)
-    return "".join(response)
+    handler.agent.invoke.return_value = {"messages": messages}
+    with patch("orderbot.chat.search_policy_chunks", return_value=PolicySearchResult("no_match")):
+        response, _ = handler._run_tool_lookup(user_text)
+        return "".join(response)
 
 
 @pytest.mark.parametrize(
@@ -216,7 +228,7 @@ def test_order_inquiry_without_lookup_tool_call_requests_verification():
     assert "two details to verify" in answer
 
 
-def test_history_is_bounded_and_redacted_but_current_turn_is_preserved():
+def test_history_is_bounded_for_authenticated_user_and_current_turn_is_preserved():
     handler = make_handler()
     handler.last_db_results = {"matched": [{"public_order_id": 42}]}
     handler.conversation_history = [
@@ -234,9 +246,9 @@ def test_history_is_bounded_and_redacted_but_current_turn_is_preserved():
     joined = " ".join(content for _, content in prior_messages)
 
     assert len(prior_messages) <= 5
-    assert "jane@example.test" not in joined
-    assert VERIFICATION_PLACEHOLDER in joined
-    assert ORDER_REPLY_PLACEHOLDER in joined
+    assert "jane@example.test" in joined
+    assert "Order 42" in joined
+    assert "tracking ABC123" in joined
     assert messages[-1][1] == "My email is current@example.test"
 
 

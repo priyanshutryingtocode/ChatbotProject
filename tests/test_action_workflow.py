@@ -51,6 +51,7 @@ def make_handler():
 
 
 def strongly_verify(handler, order_id=42, age=timedelta(seconds=0)):
+    handler.owner_user_id = "customer-1"
     handler.last_db_results = {"matched": [{"public_order_id": order_id, "status": "Processing"}]}
     handler.strong_verified_order_id = order_id
     handler.strong_verified_at = datetime.now(timezone.utc) - age
@@ -84,7 +85,7 @@ def test_expired_request_does_not_attempt_database_write():
     pending = stage_action("cancel_request", 42, "Duplicate order", None)
     pending["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
-    with patch("orderbot.actions.supabase_server_client") as client:
+    with patch("orderbot.actions.order_support_client") as client:
         assert submit_confirmed_action(pending) is None
         client.assert_not_called()
 
@@ -94,9 +95,9 @@ def test_confirmed_request_inserts_only_support_request_fields():
     query = FakeQuery(FakeResponse([expected]))
     client = MagicMock()
     client.table.return_value = query
-    pending = stage_action("return_request", 42, "Wrong size", "conversation-1")
+    pending = stage_action("return_request", 42, "Wrong size", "conversation-1", owner_user_id="customer-1")
 
-    with patch("orderbot.actions.supabase_server_client", return_value=client):
+    with patch("orderbot.actions.order_support_client", return_value=client):
         result = submit_confirmed_action(pending)
 
     assert result == expected
@@ -115,10 +116,10 @@ def test_insert_retry_resolves_duplicate_by_idempotency_key():
     read_query = FakeQuery(FakeResponse([row]))
     client = MagicMock()
     client.table.side_effect = [insert_query, read_query]
-    pending = stage_action("cancel_request", 42, "Duplicate", None)
+    pending = stage_action("cancel_request", 42, "Duplicate", None, owner_user_id="customer-1")
     pending["request_key"] = "key"
 
-    with patch("orderbot.actions.supabase_server_client", return_value=client):
+    with patch("orderbot.actions.order_support_client", return_value=client):
         result = submit_confirmed_action(pending)
 
     assert result == row
@@ -132,7 +133,7 @@ def test_failed_insert_and_idempotency_lookup_return_no_success():
     client.table.return_value = query
     pending = stage_action("return_request", 42, "Wrong size", None)
 
-    with patch("orderbot.actions.supabase_server_client", return_value=client):
+    with patch("orderbot.actions.order_support_client", return_value=client):
         assert submit_confirmed_action(pending) is None
 
 

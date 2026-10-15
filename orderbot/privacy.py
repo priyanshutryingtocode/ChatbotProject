@@ -1,15 +1,28 @@
-"""Minimize sensitive content written to persisted conversation history."""
+"""Minimize personal data copied into support-request reasons."""
 
 import re
-
 from .identity import extract_info_from_query
 
 VERIFICATION_PLACEHOLDER = "[Verification details redacted]"
+
 ORDER_REPLY_PLACEHOLDER = "[Order details redacted]"
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d().\s-]{7,}\d)(?!\w)")
+
 _ORDER_REFERENCE_RE = re.compile(r"(?:\border\s*(?:id|number)?\s*[:#]?\s*|#)\d+", re.IGNORECASE)
+
+_LEGACY_TRANSCRIPT_PLACEHOLDERS = {
+    VERIFICATION_PLACEHOLDER,
+    ORDER_REPLY_PLACEHOLDER,
+    "[Historical message redacted]",
+}
+
+
+def is_legacy_transcript_placeholder(content: str) -> bool:
+    """Identify whole-message placeholders saved by older transcript redaction."""
+    return (content or "").strip() in _LEGACY_TRANSCRIPT_PLACEHOLDERS
 
 
 def persisted_message(role: str, content: str, order_context: bool = False) -> str:

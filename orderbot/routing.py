@@ -7,7 +7,6 @@ rules can be read, tested, and tuned on their own.
 
 import re
 
-# Keywords that suggest a follow-up about an already-verified order.
 FOLLOW_UP_WORDS = (
     "track",
     "tracking",
@@ -25,8 +24,6 @@ FOLLOW_UP_WORDS = (
 
 FALLBACK_MESSAGE = "I'm sorry, there was an error processing your request. Please try again or contact support."
 
-# Keywords marking a public-policy / FAQ question. Policy answers come from
-# retrieved documents and never require identity verification.
 POLICY_WORDS = (
     "policy",
     "policies",
@@ -45,26 +42,18 @@ POLICY_WORDS = (
     "time slot",
 )
 
-# Phrase-level policy intents that keyword matching alone would miss.
 POLICY_PHRASES = (
     re.compile(r"\bhow\s+(?:do|can)\s+i\s+cancel\b"),
     re.compile(r"\bcancel(?:\s+my|\s+the)?\s+order\b"),
     re.compile(r"\breturn\s+(?:my|the|an)?\s*(?:order|item)\b"),
 )
 
-# A refund can be either a public-policy question or a request for the status
-# of a particular verified order. Keep only clear status wording in the latter
-# category; requests to get a refund should go to the policy retriever.
 ORDER_REFUND_STATUS_RE = re.compile(
     r"\b(?:refund\s+(?:status|is|was|has|been|pending|processed|received|arrived)|"
     r"(?:status|when|where)\s+(?:is\s+)?(?:my\s+)?refund|my\s+refund)\b",
     re.IGNORECASE,
 )
 
-# A damage claim is the same split: "what is your damage policy" is public,
-# "my item arrived damaged" is about a specific verified order. Both branches
-# require a first-person marker, so hypotheticals such as "what if the item is
-# damaged" still reach the retriever.
 ORDER_DAMAGE_RE = re.compile(
     r"\b(?:my|i)\b[^.!?\n]{0,40}?\b(?:order|item|items|parcel|package|delivery|box|product)s?\b"
     r"[^.!?\n]{0,40}?\b(?:damaged|damage|broken|crushed|defective|torn|spoiled|leaking)\b"
@@ -74,7 +63,6 @@ ORDER_DAMAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Words that are clearly conversational filler rather than a bare name.
 BARE_NAME_STOPWORDS = {
     "hello",
     "hi",
@@ -103,7 +91,6 @@ BARE_NAME_STOPWORDS = {
     "ok done",
 }
 
-# First words that signal a question or non-identity statement.
 BARE_NAME_QUESTION_WORDS = {
     "where",
     "what",
@@ -135,11 +122,8 @@ BARE_NAME_QUESTION_WORDS = {
     "cancel",
 }
 
-# A bare abort of the current flow ("cancel", "cancel that") — distinct from a
-# cancellation *request* about an order ("cancel my order"), which is policy.
 BARE_CANCEL_RE = re.compile(r"^(?:ok[,\s]*)?(?:please\s+)?cancel(?:\s+(?:it|that|this))?\s*(?:please)?$")
 
-# A message that is only an order number, with an optional label or "#" prefix.
 BARE_ORDER_NUMBER_RE = re.compile(r"(?:order\s*(?:number|id|no)?\s*[:#]?\s*)?#?\s*(\d{1,4})\s*[.!]?")
 
 

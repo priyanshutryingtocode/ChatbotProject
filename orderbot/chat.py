@@ -7,16 +7,16 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 
 from .agent import build_agent
-from .actions import stage_action, submit_confirmed_action
+from .actions import get_action_request_status, stage_action, submit_confirmed_action
 from .config import MAX_ORDER_ID, MIN_ORDER_ID, SYSTEM_PROMPT, chatmodel
 from .conversations import ConversationStore
 from .database import format_order_number
+from .handoff import build_order_case_handoff
 from .identity import count_lookup_fields, extract_info_from_query, has_lookup_identifier
 from .order_context import format_database_context
-from .orders import OrderCriteria, OrderLookup
-from .orders import lookup_order as perform_order_lookup
-from .privacy import persisted_message
-from .responses import format_grounded_lookup, format_order_follow_up, typewriter
+from .orders import OrderCriteria, OrderLookup, lookup_order as perform_order_lookup
+from .responses import format_grounded_lookup, format_order_follow_up
+from .retriever import search_policy_chunks
 from .routing import (
     BARE_ORDER_NUMBER_RE,
     FALLBACK_MESSAGE,
@@ -68,22 +68,71 @@ def _format_policy_excerpts(chunks: list[dict]) -> str:
     return "Here are the relevant excerpts from our help documents:\n\n" + "\n\n---\n\n".join(sections)
 
 
-# An explicit bail-out mid-verification ("never mind", "skip", "forget it").
-#
-# Matched with fullmatch(), not search(): a message that merely *contains* an
-# abort word ("there's nothing wrong with my order", "I want to skip ahead") is
-# still a real turn and must not discard the identity collected so far. Only a
-# message that is nothing but a bail-out abandons verification. Mirrors the
-# anchored BARE_CANCEL_RE in routing.py.
+def _policy_source_label(chunk: dict) -> str:
+    """Format a compact source path without repeating the document title."""
+    title = chunk.get("source_title") or "Unknown"
+    heading = chunk.get("heading")
+    prefix = f"{title} > "
+    if isinstance(heading, str) and heading.casefold().startswith(prefix.casefold()):
+        heading = heading[len(prefix) :]
+    return f"{title} > {heading}" if heading else title
+
+
 _ABORT_RE = re.compile(
     r"(?:ok,?\s+|please\s+)?"
     r"(?:never\s*mind|forget\s+(?:it|that)|skip(?:\s+(?:it|that|this))?|nothing(?:\s+else)?)"
     r"[.!]?",
     re.IGNORECASE,
 )
+
 _ACTION_REQUEST_RE = re.compile(
     r"\b(?:cancel|return)\s+(?:my|the|this|that|order|item)\b"
-    r"|\b(?:i\s+want\s+to|i\s+need\s+to|i(?:'d|\s+would)\s+like\s+to|please)\s+(?:cancel|return)\b",
+    r"|\bi\s+(?:want(?:ed)?|need(?:ed)?|hope(?:d)?|plan(?:ned)?)\s+to\s+(?:cancel|return)\b"
+    r"|\b(?:i(?:'d|\s+would)\s+like\s+to|please)\s+(?:cancel|return)\b",
+    re.IGNORECASE,
+)
+
+_ACTION_STATUS_RE = re.compile(
+    r"\b(?:request|cancellation request|return request)\b.{0,50}\b(?:status|approved|approve|accepted|rejected|reviewed|update|progress)\b"
+    r"|\b(?:approved|accepted|rejected|reviewed)\b.{0,40}\b(?:request|cancellation|return)\b",
+    re.IGNORECASE,
+)
+
+_NEW_ORDER_INTENT_RE = re.compile(
+    r"\b(?:i(?:'d|\s+would)?\s+like\s+to|i\s+(?:want|need)\s+to|can\s+i|could\s+i|"
+    r"can\s+you\s+(?:help\s+me\s+)?|please\s+)\s*(?:buy|purchase|order)\b|"
+    r"\b(?:place|make|create)\s+(?:a|an|my|new)?\s*order\b",
+    re.IGNORECASE,
+)
+_GENERIC_SUPPORT_REQUEST_RE = re.compile(
+    r"\b(?:create|open|raise|submit|file|make|start|log)\s+(?:a|an|the|this|that)?\s*"
+    r"(?:support\s+)?(?:request|case|ticket|investigation)\b|"
+    r"\b(?:request|case|ticket|investigation)\b.{0,24}\b(?:same|delivery|missing|package|order)\b",
+    re.IGNORECASE,
+)
+_DELIVERY_PROBLEM_RE = re.compile(
+    r"\b(?:didn['’]?t\s+receive|haven['’]?t\s+received|not\s+received|never\s+arrived|"
+    r"marked\s+delivered|delivery\s+discrepancy|missing\s+(?:package|parcel|order))\b",
+    re.IGNORECASE,
+)
+_DELIVERY_NOT_RECEIVED_RE = re.compile(
+    r"\b(?:didn['’]?t\s+receive|haven['’]?t\s+received|not\s+received|never\s+arrived)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_DELIVERY_REQUEST_RE = re.compile(
+    r"\b(?:delivery|missing\s+(?:package|parcel|order)|undelivered)\b.{0,55}\b"
+    r"(?:request|case|ticket|investigation|issue|report)\b|"
+    r"\b(?:request|case|ticket|investigation|report)\b.{0,55}\b(?:delivery|missing|undelivered)\b",
+    re.IGNORECASE,
+)
+
+_STANDARD_RETURN_FOLLOWUP_RE = re.compile(
+    r"\b(?:standard|regular|normal)\s+(?:return\s+)?policy\b|"
+    r"\bwhat\s+is\s+the\s+standard\b",
+    re.IGNORECASE,
+)
+_STANDARD_RETURN_CONTEXT_RE = re.compile(
+    r"\b(?:standard\s+)?30[- ]day\s+return\s+policy\b",
     re.IGNORECASE,
 )
 
@@ -94,13 +143,14 @@ class OrderChatHandler:
         conversation_id: str | None = None,
         session_id: str | None = None,
         stored_messages: list[dict] | None = None,
+        owner_user_id: str | None = None,
+        authenticated_email: str | None = None,
     ):
-        # Identifies the browser session, not a person. Passed by main.py so the
-        # conversation it creates can be listed and reloaded by that same
-        # session only. See migration 006.
         self.session_id = session_id
+        self.owner_user_id = owner_user_id
+        self.authenticated_email = (authenticated_email or "").strip().casefold() or None
         self.llm = chatmodel()
-        self.conversations = ConversationStore(conversation_id, session_id)
+        self.conversations = ConversationStore(conversation_id, session_id, owner_user_id)
         self.conversation_history = []
         self.last_db_results = None
         self.verification = VerificationState()
@@ -109,10 +159,6 @@ class OrderChatHandler:
         self.strong_verified_order_id = None
         self.strong_verified_at = None
         self.pending_action = None
-        # The last successful lookup used a customer name as its only secondary
-        # detail, which restricts what may be disclosed. Scoping the flag to the
-        # single stored result set is equivalent to tracking individual order
-        # ids, because the flag derives from the lookup criteria, not the rows.
         self.name_only_verified = False
         self.conversation_history = self.conversations.load(stored_messages)
         self.agent = build_agent(self._make_order_tool(), self._make_action_tools())
@@ -132,7 +178,7 @@ class OrderChatHandler:
             name: str = "",
             fields: list[str] | None = None,
         ) -> str:
-            """Look up an order after verifying the order number and a matching email, phone, or name."""
+            """Look up an order with its number and a matching identity detail; the server binds the authenticated email when available."""
             if self.verification_guard.locked:
                 return json.dumps({"status": "too_many_attempts"})
             if self.strong_verified_order_id and self.strong_verified_order_id != int(order_id):
@@ -141,7 +187,12 @@ class OrderChatHandler:
                 self._clear_strong_verification()
                 self.pending_action = None
 
-            lookup = perform_order_lookup(OrderCriteria(order_id, email, phone, name))
+            if self.authenticated_email and email and email.strip().casefold() != self.authenticated_email:
+                lookup = OrderLookup("not_found")
+            else:
+                lookup = perform_order_lookup(
+                    OrderCriteria(order_id, self.authenticated_email or email, phone, name)
+                )
             payload = format_order_lookup_payload(lookup, fields)
             if lookup.status == "found":
                 self.last_db_results = {"matched": lookup.orders}
@@ -168,10 +219,44 @@ class OrderChatHandler:
     def _make_action_tools(self):
         """Create request tools that only stage an in-memory confirmation."""
 
-        def stage(action: str, order_id: int, reason: str) -> str:
-            if not self._has_recent_strong_verification(order_id):
+        def stage(
+            action: str,
+            order_id: int | None,
+            reason: str,
+            request_details: dict | None = None,
+        ) -> str:
+            if not self.owner_user_id:
                 return json.dumps({"status": "verification_required"})
-            self.pending_action = stage_action(action, order_id, reason, self.conversation_id)
+            if order_id is not None and not self._has_recent_strong_verification(order_id):
+                return json.dumps({"status": "verification_required"})
+            verified_order = next(
+                (
+                    order
+                    for order in self._orders()
+                    if order_id is not None and int(order.get("public_order_id", -1)) == int(order_id)
+                ),
+                {},
+            )
+            recent_customer_messages = [
+                content
+                for role, content in self.conversation_history
+                if role in {"human", "user"} and content
+            ]
+            handoff_context = build_order_case_handoff(
+                action,
+                verified_order,
+                reason,
+                recent_customer_messages=recent_customer_messages,
+                request_details=request_details,
+            )
+            self.pending_action = stage_action(
+                action,
+                order_id,
+                reason,
+                self.conversation_id,
+                self.owner_user_id,
+                handoff_context,
+            )
             return json.dumps(
                 {
                     "status": "pending_confirmation",
@@ -194,7 +279,34 @@ class OrderChatHandler:
                 return json.dumps({"status": "invalid_reason"})
             return stage("cancel_request", order_id, reason)
 
-        return [request_return, cancel_order]
+        @tool("request_delivery_issue")
+        def request_delivery_issue(order_id: int, reason: str) -> str:
+            """Stage a missing or misdelivered order investigation for support review."""
+            if not reason or not reason.strip() or len(reason.strip()) > 300:
+                return json.dumps({"status": "invalid_reason"})
+            return stage("delivery_issue_request", order_id, reason)
+
+        @tool("create_support_request")
+        def create_support_request(
+            topic: str,
+            summary: str,
+            details: str = "",
+            order_id: int | None = None,
+        ) -> str:
+            """Prepare any customer support request for explicit confirmation and human review. Use an order ID only for an order-related request; linked orders require recent verification."""
+            topic = (topic or "").strip()
+            summary = (summary or "").strip()
+            details = (details or "").strip()
+            if not topic or len(topic) > 100 or not summary or len(summary) > 300 or len(details) > 1000:
+                return json.dumps({"status": "invalid_request"})
+            return stage(
+                "support_request",
+                order_id,
+                summary,
+                {"topic": topic, "summary": summary, "details": details},
+            )
+
+        return [request_return, cancel_order, request_delivery_issue, create_support_request]
 
     def _remember_strong_verification(self, lookup) -> None:
         if lookup.criteria.get("email") or lookup.criteria.get("phone"):
@@ -226,7 +338,7 @@ class OrderChatHandler:
         if pending["expires_at"] <= datetime.now(timezone.utc):
             self.pending_action = None
             return False, "This request has expired. Please submit it again."
-        if not self._has_recent_strong_verification(pending["order_id"]):
+        if pending["order_id"] is not None and not self._has_recent_strong_verification(pending["order_id"]):
             self.pending_action = None
             return False, "Please verify this order again with its email or phone before submitting the request."
 
@@ -234,31 +346,25 @@ class OrderChatHandler:
         if not result:
             return False, "I couldn't submit the request. Please try again shortly."
         self.pending_action = None
-        message = (
-            f"Your {pending['action'].replace('_request', '')} request was recorded for human review. "
-            "The order has not been changed."
-        )
+        action_label = {
+            "cancel_request": "cancellation",
+            "return_request": "return",
+            "delivery_issue_request": "delivery investigation",
+        }.get(pending["action"], "support")
+        if pending["order_id"] is None:
+            message = f"Your {action_label} request was recorded for human review."
+        else:
+            message = f"Your {action_label} request was recorded for human review. The order has not been changed."
         self.conversation_history.append(("assistant", message))
-        self._persist_message("assistant", message, order_context=True)
+        self._persist_message("assistant", message)
         return True, message
 
     def discard_pending_action(self, request_key: str) -> None:
         if self.pending_action and self.pending_action["request_key"] == request_key:
             self.pending_action = None
 
-    @property
-    def pending_identity(self) -> dict[str, str]:
-        """Compatibility view for UI/tests; state mutations stay explicit."""
-        return self.verification.as_criteria()
-
     def stream_response(self, user_input, on_step=None):
-        """Yield response deltas for the UI, persisting both turns at the end.
-
-        Deterministic branches yield their complete text instantly (short ones
-        through the fast typewriter), while model-backed leaves stream real
-        tokens. Never raises — failures degrade to the standard apology so the
-        chat never stalls.
-        """
+        """Yield one complete response after work finishes; never expose partial model output."""
         if not user_input or not user_input.strip():
             greeting = (
                 "Hello! I'm here to help you check your order status. To look up an order "
@@ -274,46 +380,33 @@ class OrderChatHandler:
             on_step("Checking your request...")
 
         response = None
-        db_results = {}
         try:
             self.conversation_history.append(("human", user_input))
-            result, db_results = self._route_message(user_input, on_step=on_step)
+            result, _ = self._route_message(user_input, on_step=on_step)
 
             if isinstance(result, str):
                 response = result
-                yield from typewriter(result)
+                yield response
             else:
-                pieces = []
-                for piece in result:
-                    if piece:
-                        pieces.append(piece)
-                        yield piece
-                response = "".join(pieces)
+                response = "".join(piece for piece in result if piece)
+                yield response
         except Exception:
-            logger.exception("Error streaming response")
+            logger.exception("Chat response generation failed")
             response = FALLBACK_MESSAGE
-            # Record the apology too, so the next turn's history does not open
-            # with two consecutive human messages.
             self.conversation_history.append(("assistant", response))
             yield response
 
-        has_order_context = bool(self.last_db_results or (db_results or {}).get("matched"))
-        verification_turn = bool(self.verification.has_any)
-        self._persist_message("user", user_input, order_context=has_order_context or verification_turn)
-        self._persist_message("assistant", response, order_context=has_order_context)
+        self._persist_message("user", user_input)
+        self._persist_message("assistant", response)
 
     def _route_message(self, user_input, on_step=None):
         """Classify a turn and produce its reply.
 
-        Assistant-turn bookkeeping belongs to the leaves: streaming generators
-        append their assembled text to conversation_history at exhaustion, and
-        deterministic branches append before returning.
+        Assistant-turn bookkeeping belongs to the leaves: model-backed paths
+        append the completed answer, and deterministic branches append before returning.
         """
         extracted = extract_info_from_query(user_input)
 
-        # While awaiting an order number, a message that is nothing but the
-        # number is the order. Anchored on purpose: a loose search would let
-        # "I ordered 3 items" register as order 3.
         if not extracted["order_ids"] and self.verification.has_any and not self.verification.order_id:
             bare_match = BARE_ORDER_NUMBER_RE.fullmatch(user_input.strip())
             if bare_match:
@@ -328,8 +421,6 @@ class OrderChatHandler:
                 self.name_only_verified = False
                 self.pending_action = None
 
-        # While awaiting the second identity detail, a bare alphabetic message
-        # is the customer's name.
         if (
             not any(extracted.values())
             and self.verification.order_id
@@ -340,9 +431,77 @@ class OrderChatHandler:
         ):
             extracted["names"] = [user_input.strip().strip(".,;:!?")]
 
-        # Public-policy questions take precedence over stored order context.
-        # Without this branch, a previous order lookup makes a broad request
-        # such as "how can I get a refund?" look like a payment-status follow-up.
+        if _ACTION_STATUS_RE.search(user_input):
+            verified_order_id = self.strong_verified_order_id
+            if verified_order_id and self._has_recent_strong_verification(verified_order_id):
+                request = get_action_request_status(verified_order_id)
+                if request is None:
+                    response = "I couldn't check the support request status right now. Please try again shortly."
+                elif not request:
+                    response = "I couldn't find a submitted support request for this verified order. Please contact support if you expected one to be recorded."
+                else:
+                    response = self._format_action_status(request)
+            else:
+                response = self._two_field_prompt()
+            self.conversation_history.append(("assistant", response))
+            return response, {}
+
+        if self._is_delivery_issue_request(user_input):
+            verified_order_id = self.strong_verified_order_id
+            if verified_order_id and self._has_recent_strong_verification(verified_order_id):
+                issue = next(
+                    (
+                        content.strip()
+                        for role, content in reversed(self.conversation_history)
+                        if role in {"human", "user"} and _DELIVERY_PROBLEM_RE.search(content)
+                    ),
+                    "Customer requests a delivery issue investigation.",
+                )
+                if re.search(r"\bmarked\s+delivered\b", issue, re.IGNORECASE) and re.search(
+                    r"\b(?:didn['’]?t\s+receive|haven['’]?t\s+received|not\s+received)\b", issue, re.IGNORECASE
+                ):
+                    reason = "Order is marked delivered, but the customer reports it was not received."
+                else:
+                    reason = f"Customer requests a delivery investigation: {issue[:220]}"
+                return self._stage_explicit_action_request(
+                    user_input,
+                    verified_order_id,
+                    action="delivery_issue_request",
+                    reason=reason,
+                )
+            response = self._ask_for_missing_field() if self.verification.has_any else self._two_field_prompt()
+            self.conversation_history.append(("assistant", response))
+            return response, {}
+
+        if self.strong_verified_order_id and _DELIVERY_NOT_RECEIVED_RE.search(user_input):
+            order = next(
+                (
+                    item
+                    for item in self._orders()
+                    if int(item.get("public_order_id", -1)) == self.strong_verified_order_id
+                ),
+                None,
+            )
+            if order:
+                status = order.get("status") or "current status unavailable"
+                response = (
+                    f"I'm sorry you haven't received it. Order #{self.strong_verified_order_id:04d} "
+                    f"currently shows {status}. I can prepare a delivery investigation request for our "
+                    "support team. It will only be sent after you review and confirm it, and it will not "
+                    "change the order."
+                )
+                self.conversation_history.append(("assistant", response))
+                return response, {}
+
+        if _NEW_ORDER_INTENT_RE.search(user_input):
+            response = (
+                "To request a new order, use the Request a new order form above the chat. "
+                "Choose an item and quantity, then review and confirm your request. Support will confirm "
+                "availability, pricing, and delivery; this request does not place an order or take payment."
+            )
+            self.conversation_history.append(("assistant", response))
+            return response, {}
+
         if self._is_action_request(user_input):
             supplied_order_id = int(extracted["order_ids"][0]) if extracted["order_ids"] else None
             verified_order_id = self.strong_verified_order_id
@@ -351,7 +510,7 @@ class OrderChatHandler:
                 and (supplied_order_id is None or supplied_order_id == verified_order_id)
                 and self._has_recent_strong_verification(verified_order_id)
             ):
-                return self._run_tool_lookup(user_input, on_step=on_step)
+                return self._stage_explicit_action_request(user_input, verified_order_id)
 
             self.verification.merge(extracted)
             if self.verification.order_id and self.verification.has_secondary:
@@ -372,8 +531,6 @@ class OrderChatHandler:
         if is_policy_question(user_input) and not is_order_specific_question(user_input, bool(self.last_db_results)):
             return self._run_tool_lookup(user_input, on_step=on_step)
 
-        # A message that only re-references the already-verified order is a
-        # follow-up, not a new lookup, so it can keep using stored context.
         verified_ids = self._verified_order_ids()
         message_order_ids = {int(order_id) for order_id in extracted["order_ids"]}
         if (
@@ -384,9 +541,6 @@ class OrderChatHandler:
         ):
             return self._continue_with_context(user_input), {}
 
-        # Let the user bail out of a half-finished verification. An explicit
-        # policy question instead interrupts collection to answer, keeping the
-        # collected identity so verification can resume afterwards.
         if self.verification.has_any:
             lowered = user_input.lower()
             if looks_like_bare_cancel(lowered) or _ABORT_RE.fullmatch(lowered.strip()):
@@ -397,23 +551,16 @@ class OrderChatHandler:
 
         self.verification.merge(extracted)
         has_order = self.verification.order_id is not None
-        has_secondary = self.verification.has_secondary
+        has_secondary = self.verification.has_secondary or bool(self.authenticated_email and has_order)
 
-        # Order number plus a second identity field: run the verified lookup now.
         if has_order and has_secondary:
             return self._run_verified_lookup(user_input)
 
-        # Verification in progress (or identity info just supplied): stay
-        # deterministic and collect the missing detail. The free-form model is
-        # never used mid-verification, so it cannot invent order data.
         if self.verification.has_any:
             response = self._ask_for_missing_field()
             self.conversation_history.append(("assistant", response))
             return response, {}
 
-        # An order inquiry or policy question the rules could not classify:
-        # let the tool loop resolve it (get_order_status enforces verification
-        # server-side; search_policies retrieves public policy documents).
         if not self.last_db_results and (
             self._is_order_inquiry(user_input, extracted) or is_policy_question(user_input)
         ):
@@ -432,7 +579,14 @@ class OrderChatHandler:
             self.last_db_results = None
             self.name_only_verified = False
             self._clear_strong_verification()
-            lookup = perform_order_lookup(OrderCriteria.from_mapping(self.verification.as_criteria()))
+            criteria = self.verification.as_criteria()
+            supplied_email = criteria.get("email")
+            if self.authenticated_email and supplied_email and supplied_email.casefold() != self.authenticated_email:
+                lookup = OrderLookup("not_found", criteria=criteria)
+            else:
+                if self.authenticated_email:
+                    criteria["email"] = self.authenticated_email
+                lookup = perform_order_lookup(OrderCriteria.from_mapping(criteria))
             if lookup.status == "unavailable":
                 response = "Order lookup is temporarily unavailable. Please try again shortly."
                 self.conversation_history.append(("assistant", response))
@@ -447,12 +601,6 @@ class OrderChatHandler:
             return response, {}
 
         if not orders:
-            # The regex extractor can build a plausible-looking but wrong value
-            # ("im gaurang and my order number is 13" captured the name as
-            # "gaurang and my"). Rather than tell the customer their own name is
-            # wrong, let the model re-read the message once. It only proposes
-            # fields: find_orders still enforces the two-field rule, so a
-            # hallucinated name returns nothing just as a wrong one would.
             if user_input:
                 retry = self._retry_lookup_via_model(user_input)
                 if retry is not None:
@@ -490,8 +638,6 @@ class OrderChatHandler:
         counting it would penalise them for our bug.
         """
         try:
-            # A retry is safe only through the shared verified lookup service.
-            # The agent may extract fields, but it cannot grant authorization.
             messages = ChatPromptTemplate.from_messages(self._build_message_list(user_input)).format_messages()
             self._count_agent_failure = False
             try:
@@ -517,46 +663,103 @@ class OrderChatHandler:
             if on_step:
                 step = "Searching policies..." if is_policy_question(user_input) else "Verifying order details..."
                 on_step(step)
-            if on_step:
-                on_step("Composing answer...")
-
             def _gen():
-                pieces = []
                 tool_results = []
-                for chunk, _metadata in self.agent.stream(
-                    {"messages": ChatPromptTemplate.from_messages(self._build_message_list(user_input)).format_messages()},
-                    stream_mode="messages",
-                ):
-                    if getattr(chunk, "type", "") == "tool":
+                state = self.agent.invoke(
+                    {"messages": ChatPromptTemplate.from_messages(self._build_message_list(user_input)).format_messages()}
+                )
+                messages = state.get("messages", [])
+                for message in messages:
+                    if getattr(message, "type", "") == "tool":
                         try:
-                            tool_results.append((getattr(chunk, "name", ""), json.loads(chunk.content)))
+                            tool_content = _message_text(getattr(message, "content", ""))
+                            tool_results.append((getattr(message, "name", ""), json.loads(tool_content)))
                         except (TypeError, ValueError):
                             continue
-                        continue
-                    piece = _message_text(getattr(chunk, "content", ""))
-                    if piece:
-                        pieces.append(piece)
-                full = "".join(pieces)
+                full = next(
+                    (
+                        text
+                        for message in reversed(messages)
+                        if getattr(message, "type", "") in ("ai", "assistant")
+                        and (text := _message_text(getattr(message, "content", "")))
+                    ),
+                    "",
+                )
                 order_result = next((result for name, result in tool_results if name == "get_order_status"), None)
                 policy_result = next((result for name, result in tool_results if name == "search_policies"), None)
                 action_result = next(
-                    (result for name, result in tool_results if name in ("request_return", "cancel_order")), None
+                    (
+                        result
+                        for name, result in tool_results
+                        if name in (
+                            "request_return",
+                            "cancel_order",
+                            "request_delivery_issue",
+                            "create_support_request",
+                        )
+                    ),
+                    None,
                 )
                 policy_only = is_policy_question(user_input) and not is_order_specific_question(
                     user_input, bool(self.last_db_results)
                 )
+                contextual_query = (
+                    self._standard_return_policy_followup(user_input) if policy_only else None
+                )
+                if policy_only and (
+                    not policy_result or policy_result.get("status") in ("found", "no_match")
+                ):
+                    retry = search_policy_chunks(
+                        contextual_query or user_input
+                    )
+                    if retry.status == "found":
+                        retry_chunks = [
+                            {
+                                "source_title": chunk.source_title,
+                                "heading": chunk.heading,
+                                "content": chunk.content,
+                            }
+                            for chunk in retry.chunks
+                        ]
+                        if contextual_query:
+                            retry_chunks = [
+                                chunk
+                                for chunk in retry_chunks
+                                if "return" in (chunk.get("source_title") or "").casefold()
+                            ]
+                            if not retry_chunks:
+                                policy_result = {"status": "no_match", "chunks": []}
+                        merged_chunks = retry_chunks + (
+                            [] if contextual_query else ((policy_result or {}).get("chunks") or [])
+                        )
+                        unique_chunks = []
+                        seen_chunks = set()
+                        for chunk in merged_chunks:
+                            key = (chunk.get("source_title"), chunk.get("heading"), chunk.get("content"))
+                            if key not in seen_chunks:
+                                seen_chunks.add(key)
+                                unique_chunks.append(chunk)
+                        if unique_chunks:
+                            policy_result = {"status": "found", "chunks": unique_chunks[:4]}
+                    elif retry.status == "unavailable" and (
+                        contextual_query or not policy_result or policy_result.get("status") == "no_match"
+                    ):
+                        policy_result = {"status": "unavailable", "chunks": []}
+                    elif contextual_query or not policy_result:
+                        policy_result = {"status": "no_match", "chunks": []}
                 if action_result:
                     full = {
                         "pending_confirmation": "Please review the support request below and confirm it to submit. This sends a request for human review; it does not change the order.",
                         "verification_required": "Please verify this order with its email address or phone number before requesting an order change.",
                         "invalid_reason": "Please provide a short reason (300 characters or fewer) for the request.",
+                        "invalid_request": "Please describe the request with a short topic and summary, then try again.",
                     }.get(action_result.get("status"), "I couldn't prepare that support request. Please contact support for help.")
                 elif policy_only and (not policy_result or policy_result.get("status") != "found"):
                     status = (policy_result or {}).get("status")
                     full = (
                         "Policy search is temporarily unavailable. Please contact support to confirm the current policy."
                         if status == "unavailable"
-                        else "I couldn't find a relevant policy in the available help documents. Please contact support to confirm the current policy."
+                        else "I couldn't find a relevant policy in the help documents, so I don't want to guess. Try rephrasing the question or contact support to confirm the current policy."
                     )
                 elif policy_only and policy_result and policy_result.get("status") == "found":
                     full = _format_policy_excerpts(policy_result.get("chunks") or [])
@@ -575,7 +778,7 @@ class OrderChatHandler:
                     full = (
                         "Policy search is temporarily unavailable. Please contact support to confirm the current policy."
                         if policy_result.get("status") == "unavailable"
-                        else "I couldn't find a relevant policy in the available help documents. Please contact support to confirm the current policy."
+                        else "I couldn't find a relevant policy in the help documents, so I don't want to guess. Try rephrasing the question or contact support to confirm the current policy."
                     )
                 if not full.strip():
                     if order_result and order_result.get("status") == "found" and self.last_db_results:
@@ -584,19 +787,18 @@ class OrderChatHandler:
                         full = self._two_field_prompt()
                     else:
                         full = FALLBACK_MESSAGE
-                if policy_result and policy_result.get("status") == "found":
+                if policy_only and policy_result and policy_result.get("status") == "found":
                     sources = list(
                         dict.fromkeys(
-                            f"{chunk['source_title']} > {chunk['heading']}" if chunk.get("heading") else chunk["source_title"]
+                            _policy_source_label(chunk)
                             for chunk in policy_result.get("chunks", [])
                         )
                     )
                     if sources:
                         source_note = "\n\n**Sources:** " + "; ".join(sources)
                         full += source_note
-                # Buffer until every tool result is known. This prevents any
-                # premature model text from leaking an order claim before the
-                # server-side verification result can replace it deterministically.
+                if on_step:
+                    on_step("Preparing your response...")
                 yield full
                 self.conversation_history.append(("assistant", full))
 
@@ -611,6 +813,22 @@ class OrderChatHandler:
             self.conversation_history.append(("assistant", response))
             return iter([response]), {}
 
+    def _standard_return_policy_followup(self, user_input: str) -> str | None:
+        """Resolve a short return-policy follow-up against the preceding assistant turn."""
+        if not _STANDARD_RETURN_FOLLOWUP_RE.search(user_input):
+            return None
+        prior_assistant = next(
+            (content for role, content in reversed(self.conversation_history) if role == "assistant"),
+            "",
+        )
+        if not _STANDARD_RETURN_CONTEXT_RE.search(prior_assistant):
+            return None
+        return (
+            "Returns Policy standard 30-day return policy: return window starts when order is marked "
+            "Delivered; item condition and packaging requirements; non-returnable categories; how to "
+            "initiate a return; return shipping charges."
+        )
+
     def _ask_for_missing_field(self) -> str:
         """Explain which identity field is still needed to complete a lookup."""
         if self.verification.order_id:
@@ -623,6 +841,8 @@ class OrderChatHandler:
             for label, key in (("email", "email"), ("phone number", "phone"), ("name", "name"))
             if getattr(self.verification, key)
         ]
+        if self.authenticated_email:
+            return "Please enter your order number to look up an order on your signed-in account."
         return (
             f"I have your {', '.join(have)}. To verify your order, I also need your order number - "
             "for example `order 42`."
@@ -631,6 +851,46 @@ class OrderChatHandler:
     def _is_order_inquiry(self, user_input: str, extracted: dict | None = None) -> bool:
         message = user_input.lower()
         return bool(has_lookup_identifier(user_input, extracted) or any(word in message for word in FOLLOW_UP_WORDS))
+
+    def _stage_explicit_action_request(
+        self,
+        user_input: str,
+        order_id: int,
+        action: str | None = None,
+        reason: str | None = None,
+    ):
+        """Stage an explicit support action after order verification."""
+        action_tool_name = (
+            "request_delivery_issue"
+            if action == "delivery_issue_request"
+            else action or ("cancel_order" if "cancel" in user_input.casefold() else "request_return")
+        )
+        action_tool = next(tool for tool in self._make_action_tools() if tool.name == action_tool_name)
+        result = json.loads(
+            action_tool.invoke(
+                {
+                    "order_id": int(order_id),
+                    "reason": (reason or user_input.strip())[:300] or "Customer request",
+                }
+            )
+        )
+        action_label = {
+            "cancel_order": "cancellation",
+            "request_return": "return",
+            "request_delivery_issue": "delivery investigation",
+        }[action_tool_name]
+        status = result.get("status")
+        if status == "pending_confirmation":
+            response = (
+                f"I can submit a {action_label} request for order #{int(order_id):04d} to our support team. "
+                "It won't change the order automatically. Review and confirm the request below."
+            )
+        elif status == "verification_required":
+            response = "Please verify this order with your account email or phone before requesting a change."
+        else:
+            response = "I couldn't prepare that request. Please contact support for help."
+        self.conversation_history.append(("assistant", response))
+        return response, {}
 
     @staticmethod
     def _is_action_request(user_input: str) -> bool:
@@ -643,12 +903,53 @@ class OrderChatHandler:
             return False
         return bool(_ACTION_REQUEST_RE.search(lowered))
 
+    def _is_delivery_issue_request(self, user_input: str) -> bool:
+        if _EXPLICIT_DELIVERY_REQUEST_RE.search(user_input):
+            return True
+        if not _GENERIC_SUPPORT_REQUEST_RE.search(user_input):
+            return False
+        recent_context = " ".join(
+            content for role, content in self.conversation_history[-6:] if role in {"human", "user", "assistant"}
+        )
+        return bool(_DELIVERY_PROBLEM_RE.search(recent_context))
+
     def _two_field_prompt(self) -> str:
+        if self.authenticated_email:
+            return "Please provide the order number for the order linked to your signed-in email account."
         return (
             "I need two details to verify your order before I can share anything: "
             "your order number plus your email, phone number, or name. "
             "For example: `order 42, email you@example.com`."
         )
+
+    @staticmethod
+    def _format_action_status(request: dict) -> str:
+        action = {
+            "cancel_request": "cancellation",
+            "return_request": "return",
+            "delivery_issue_request": "delivery investigation",
+        }.get(request.get("action_type"), "support")
+        status = request.get("status")
+        if status == "submitted":
+            return (
+                f"Your {action} request is recorded and is waiting for a support agent to review it. "
+                "It has not been marked reviewed or rejected, and the order has not been changed."
+            )
+        if status == "reviewed":
+            return (
+                f"A support agent has reviewed your {action} request. The request is marked Reviewed; "
+                "the support system does not record a separate approval outcome or change the order automatically."
+            )
+        if status == "rejected":
+            return f"A support agent has rejected your {action} request. Please contact support if you need more information."
+        if status == "completed":
+            return (
+                f"Your {action} request is marked completed in the support system. "
+                "You can ask me to check the verified order for its current status."
+            )
+        if status == "failed":
+            return f"Your {action} request could not be completed. Please contact support for help."
+        return "I found the support request, but its status is unavailable. Please contact support for an update."
 
     def _build_message_list(self, user_input):
         """System prompt (with query-relevant order data) + history + current message."""
@@ -667,68 +968,42 @@ class OrderChatHandler:
         else:
             system_prompt = SYSTEM_PROMPT
 
+        if self.authenticated_email:
+            system_prompt += (
+                "\n\nAUTHENTICATED ACCOUNT: This session's email was verified by Supabase Auth. "
+                "The server supplies that account email to order lookup as the matching identity detail. "
+                "Ask only for the order number; never request another identity detail or replace the "
+                "account email with a user-provided email."
+            )
+
         messages = [("system", system_prompt)]
         history = self.conversation_history
         current_already_appended = bool(history and history[-1] == ("human", user_input))
         prior_history = history[:-1] if current_already_appended else history
-        # Keep at most five prior turns and redact them again before passing
-        # them to the model. Only the current user turn stays unredacted so
-        # identity fields supplied in this request can be checked by the tool.
         recent_history = prior_history[-5:]
         messages.extend(
-            (
-                role,
-                persisted_message(
-                    "user" if role == "human" else role,
-                    content,
-                    order_context=bool(self.last_db_results and role == "assistant"),
-                ),
-            )
+            ("user" if role == "human" else role, content)
             for role, content in recent_history
         )
         messages.append(("human", user_input))
         return messages
 
     def _continue_with_context(self, user_input):
-        """Answer a follow-up from stored context, or conversationally without data.
-
-        Returns an iterator of deltas. Conversation history is appended before
-        any text is produced.
-        """
+        """Answer a follow-up from stored context or conversationally without data."""
         deterministic_response = format_order_follow_up(self._orders(), self.name_only_verified, user_input)
         if deterministic_response:
             self.conversation_history.append(("assistant", deterministic_response))
             return iter([deterministic_response])
+        response, _ = self._run_tool_lookup(user_input)
+        return response
 
-        prompt_template = ChatPromptTemplate.from_messages(self._build_message_list(user_input))
-        chain = prompt_template | self.llm
-
-        def _gen():
-            pieces = []
-            for chunk in chain.stream({}):
-                piece = _message_text(getattr(chunk, "content", ""))
-                if piece:
-                    pieces.append(piece)
-                    yield piece
-            self.conversation_history.append(("assistant", "".join(pieces)))
-
-        return _gen()
-
-    def _persist_message(self, role: str, content: str, order_context: bool = False) -> None:
-        """Persist one privacy-filtered transcript message. Never raises."""
-        self.conversations.append(role, content, order_context=order_context)
+    def _persist_message(self, role: str, content: str) -> None:
+        """Persist one complete message in this authenticated user's transcript."""
+        self.conversations.append(role, content)
 
     def end_session(self) -> None:
         """Mark the current conversation as ended (best-effort)."""
         self.conversations.end()
-
-    def clear_context(self):
-        self.conversation_history = []
-        self.last_db_results = None
-        self.verification.reset()
-        self.name_only_verified = False
-        self._clear_strong_verification()
-        self.pending_action = None
 
     def _orders(self) -> list[dict]:
         """Orders from the last successful lookup, or none."""

@@ -27,3 +27,22 @@ Before the next attempt you can:
 
 Support can update these details using your order number plus one identity
 detail such as your registered email or phone number.
+
+## Common failed-delivery questions
+
+**What does Failed Delivery mean?** The carrier attempted delivery but could
+not complete it. Common reasons include nobody being available, inaccessible
+gates, or incorrect contact details.
+
+**Do I need to book another delivery attempt?** No. The carrier automatically
+reattempts within 48 hours. Make sure someone can receive the parcel during
+the selected delivery slot.
+
+**What happens after two failed attempts?** The parcel returns to the
+warehouse and a full refund is initiated automatically to the original
+payment method.
+
+**How can I help the next delivery succeed?** Confirm the address and landmark
+with support, switch to a more convenient available slot, or ask a neighbour
+or security desk to accept the parcel. Support can update details after
+verifying the order number and one matching identity detail.

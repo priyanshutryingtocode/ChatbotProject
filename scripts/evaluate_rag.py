@@ -8,20 +8,16 @@ import json
 import sys
 from pathlib import Path
 
-# Running as `python scripts/<name>.py` puts scripts/ on sys.path rather than the
-# repository root, so orderbot would not resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orderbot.retriever import MIN_SIMILARITY, retrieve_policy_matches
 
-# Repo root, so paths below do not depend on the caller's working directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CASES_PATH = REPO_ROOT / "eval" / "rag_eval_cases.json"
 
-# A query the seeded corpus must answer. Used to prove retrieval is actually
-# working before any case is scored.
 LIVENESS_QUERY = "what is the return window"
+
 LIVENESS_EXPECTED_DOC = "Returns Policy"
 
 
@@ -54,12 +50,17 @@ def evaluate(cases: list[dict]) -> tuple[list[dict], dict[str, float | int]]:
         matches = retrieve_policy_matches(case["question"])
         returned_docs = list(dict.fromkeys(match.get("doc_title", "Unknown") for match in matches))
         expected_docs = set(case["expected_docs"])
-        passed = not returned_docs if not expected_docs else bool(expected_docs.intersection(returned_docs))
+        relevant_ranks = [index for index, title in enumerate(returned_docs, start=1) if title in expected_docs]
+        passed = not returned_docs if not expected_docs else bool(relevant_ranks)
+        reciprocal_rank = 1 / relevant_ranks[0] if relevant_ranks else 0.0
+        recall_at_k = len(expected_docs.intersection(returned_docs)) / len(expected_docs) if expected_docs else 0.0
         results.append(
             {
                 **case,
                 "returned_docs": returned_docs,
                 "scores": [round(match.get("similarity", 0), 3) for match in matches],
+                "reciprocal_rank": reciprocal_rank,
+                "recall_at_k": recall_at_k,
                 "passed": passed,
             }
         )
@@ -71,6 +72,10 @@ def evaluate(cases: list[dict]) -> tuple[list[dict], dict[str, float | int]]:
         "passed": sum(result["passed"] for result in results),
         "retrieval_hit_rate": sum(result["passed"] for result in positive) / len(positive) if positive else 0,
         "no_match_accuracy": sum(result["passed"] for result in negative) / len(negative) if negative else 0,
+        "mean_reciprocal_rank": (
+            sum(result["reciprocal_rank"] for result in positive) / len(positive) if positive else 0
+        ),
+        "mean_recall_at_k": sum(result["recall_at_k"] for result in positive) / len(positive) if positive else 0,
     }
     return results, stats
 
@@ -83,6 +88,8 @@ def main() -> None:
     print(f"Pass rate: {stats['passed']}/{stats['cases']}")
     print(f"Retrieval hit rate: {stats['retrieval_hit_rate']:.1%}")
     print(f"No-match accuracy: {stats['no_match_accuracy']:.1%}")
+    print(f"Mean reciprocal rank: {stats['mean_reciprocal_rank']:.3f}")
+    print(f"Mean recall@k: {stats['mean_recall_at_k']:.1%}")
     print("\nFailures:")
     failures = [result for result in results if not result["passed"]]
     if not failures:

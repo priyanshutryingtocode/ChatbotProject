@@ -5,7 +5,6 @@ database writes or grant authorization.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Literal, Mapping
 
 OrderLookupStatus = Literal[
@@ -17,10 +16,8 @@ OrderLookupStatus = Literal[
     "too_many_attempts",
     "unavailable",
 ]
+
 PolicySearchStatus = Literal["found", "no_match", "unavailable"]
-ActionType = Literal["return_request", "cancel_request"]
-EligibilityStatus = Literal["eligible", "ineligible", "needs_human_review", "unknown"]
-ActionRequestStatus = Literal["pending_confirmation", "approved", "rejected", "expired", "completed", "failed"]
 
 
 @dataclass(frozen=True)
@@ -60,40 +57,3 @@ class PolicyChunk:
 class PolicySearchResult:
     status: PolicySearchStatus
     chunks: list[PolicyChunk] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class EligibilityResult:
-    status: EligibilityStatus
-    reason_code: str
-    customer_message: str
-    policy_sources: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ActionRequest:
-    request_id: str
-    action: ActionType
-    order_id: int
-    status: ActionRequestStatus
-    idempotency_key: str
-    created_at: datetime
-    expires_at: datetime | None = None
-    reason: str | None = None
-
-
-@dataclass(frozen=True)
-class ActionConfirmation:
-    request_id: str
-    argument_fingerprint: str
-    confirmed_at: datetime
-    confirmed_by: str
-
-
-@dataclass(frozen=True)
-class SupportEscalation:
-    escalation_id: str
-    safe_summary: str
-    status: Literal["pending", "assigned", "resolved", "closed"]
-    created_at: datetime
-    conversation_id: str | None = None

@@ -6,26 +6,8 @@ functions take the verified order data as arguments; they hold no state.
 """
 
 import re
-import time
-
 from .config import STATUS_EXPLANATIONS
 from .database import format_order_for_display, format_timestamp, order_summary, related_one
-from .routing import ORDER_REFUND_STATUS_RE
-
-# --- follow-up intent classification ---------------------------------------
-#
-# Matching on substrings ("driver" in message) misreads identity questions as
-# timing questions: "who delivered it" contains "deliver", so it fell through to
-# the date branch and answered with a timestamp. Two rules prevent that:
-#
-#   * An identity question (who/which/what + a delivery topic) is a driver
-#     question, and is checked before the date branch.
-#   * The date branch excludes wh-words, so no identity question can reach it.
-#
-# Patterns are word-anchored because substring matching also fired on "when" in
-# "whenever" and "paid" in "unpaid". Order is most-specific first: the first
-# match wins, so a question naming both a field and a date ("what's the
-# tracking number, and when does it arrive") is answered about tracking.
 
 _WH = r"who|whom|which|what"
 
@@ -39,9 +21,15 @@ _INTENTS = (
             re.I,
         ),
     ),
-    # An identity question about delivery. The topic is optional because the
-    # wh-word alone is enough once a verified order is in context: "by whom?"
-    # names no delivery noun but can only mean the driver.
+    (
+        "order_date",
+        re.compile(
+            r"\b(?:when\s+(?:was|did)\s+(?:my\s+|the\s+)?order\s+(?:placed|ordered)|"
+            r"when\s+did\s+i\s+(?:place|order)\s+(?:my\s+|the\s+)?order|"
+            r"(?:order|purchase)\s+date|date\s+(?:of|when)\s+(?:the\s+)?order)\b",
+            re.I,
+        ),
+    ),
     (
         "driver",
         re.compile(
@@ -55,16 +43,6 @@ _INTENTS = (
         "tracking",
         re.compile(r"\b(?:tracking|track|consignment|waybill|courier|carrier|shipped\s+by|shipping\s+company)\b", re.I),
     ),
-    # Order changes are not something this assistant can perform, so an explicit
-    # change request is declined deterministically rather than answered with a
-    # field. Checked before payment and date: "delivery" and "refund" both appear
-    # in change requests and would otherwise be answered as a timing or payment
-    # question ("return my refund" was answered "Payment status: Paid").
-    # Still below the field intents, so a question that names one ("what's the
-    # tracking number, I want to cancel") is answered about the field.
-    #
-    # A refund *request* is a change; a refund *status* question is not, which is
-    # why a verb is required here — bare "refund" falls through to payment.
     (
         "refusal",
         re.compile(
@@ -91,10 +69,6 @@ _INTENTS = (
             re.I,
         ),
     ),
-    # Explicit refund *status* wording, e.g. "what's my refund status". Listed
-    # after the broad payment rule because both match it and the broad rule is
-    # sufficient; kept so the intent set stays self-documenting.
-    ("payment", re.compile(ORDER_REFUND_STATUS_RE)),
     (
         "date",
         re.compile(
@@ -111,8 +85,7 @@ _INTENTS = (
     ),
 )
 
-# Facts a name-only verification may never disclose.
-_SENSITIVE_INTENTS = frozenset({"driver", "tracking", "payment", "items"})
+_SENSITIVE_INTENTS = frozenset({"driver", "tracking", "payment", "items", "order_date"})
 
 
 def classify_intent(message: str) -> str | None:
@@ -126,26 +99,11 @@ def classify_intent(message: str) -> str | None:
     return None
 
 
-def typewriter(text: str, word_delay: float = 0.006, max_animated_words: int = 60):
-    """Fast typing variant: a brief effect for short deterministic replies;
-    anything longer renders instantly."""
-    words = text.split(" ")
-    if len(words) > max_animated_words:
-        yield text
-        return
-    for index, word in enumerate(words):
-        yield word + (" " if index < len(words) - 1 else "")
-        if index < len(words) - 1:
-            time.sleep(word_delay)
-
-
 def format_grounded_lookup(db_results: dict, name_only: bool = False) -> str:
     """Exact database-backed response for a new identity lookup."""
     orders = db_results.get("matched") or []
     if len(orders) != 1:
         if name_only:
-            # A common name can match several orders. Keep the same disclosure
-            # limit as a single name-verified result; never dump full rows here.
             lines = [f"I found {len(orders)} matching orders. With name-only verification, I can share status and delivery timing:"]
             for order in orders:
                 summary = order_summary(order)
@@ -190,9 +148,6 @@ def format_order_follow_up(orders: list[dict], name_only: bool, user_input: str)
     if intent is None:
         return None
 
-    # Name-only verification is a lower-confidence check, so it discloses status
-    # and delivery timing only. Keyed on the detected intent rather than a word
-    # list, which previously missed phrasings like "which courier brought it".
     if name_only and intent in _SENSITIVE_INTENTS:
         return (
             "For privacy, name-only verification can show order status and delivery timing only. "
@@ -248,6 +203,14 @@ def format_order_follow_up(orders: list[dict], name_only: bool, user_input: str)
     if intent == "payment":
         return f"Payment status for order #{order_number}: **{order.get('payment_status', 'Unknown')}**."
 
+    if intent == "order_date":
+        ordered_at = order.get("ordered_at")
+        return (
+            f"Order #{order_number} was placed on **{format_timestamp(ordered_at)}**."
+            if ordered_at
+            else f"The order date is not available for order #{order_number}."
+        )
+
     if intent == "date":
         delivered = shipment.get("delivered_at")
         estimated = shipment.get("estimated_delivery_at")
@@ -257,7 +220,6 @@ def format_order_follow_up(orders: list[dict], name_only: bool, user_input: str)
             return f"The estimated delivery for order #{order_number} is **{format_timestamp(estimated)}**."
         return f"There is no delivery estimate available yet for order #{order_number}."
 
-    # "items": the row is not something the order-level facts can answer.
     if intent == "items":
         items = order.get("order_items") or []
         if items:

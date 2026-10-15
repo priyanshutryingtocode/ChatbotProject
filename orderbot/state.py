@@ -68,7 +68,6 @@ class VerificationState:
 @dataclass
 class VerificationAttemptGuard:
     """Session-local abuse guard; no customer data is retained."""
-
     max_failures: int = 5
     cooldown_seconds: int = 300
     failures: int = 0

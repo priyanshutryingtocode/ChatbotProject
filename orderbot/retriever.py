@@ -11,22 +11,22 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-from .config import GEMINI_API_KEY, supabase_server_client
+from .config import GEMINI_API_KEY, order_support_client
 from .contracts import PolicyChunk, PolicySearchResult
 
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL = "gemini-embedding-001"
-# Gemini embeddings default to 3072 dims; pin 768 to match the pgvector column.
+
 OUTPUT_DIMENSIONALITY = 768
+
 DEFAULT_MATCH_COUNT = 4
-# Authoritative similarity floor; passed on every call. Mirrored as the RPC
-# default in supabase/migrations/005_rag_retrieval_quality.sql.
+
 MIN_SIMILARITY = 0.6
 
 
 def _client():
-    return supabase_server_client()
+    return order_support_client()
 
 
 @lru_cache(maxsize=1)
@@ -98,7 +98,7 @@ def _embed_query(query: str) -> list[float]:
     return list(_cached_query_embedding(_normalize_query(query)))
 
 
-def _match_chunks(embedding: list[float], k: int) -> list[dict]:
+def _match_chunks(embedding: list[float], k: int, query_text: str) -> list[dict]:
     response = (
         _client()
         .rpc(
@@ -107,6 +107,7 @@ def _match_chunks(embedding: list[float], k: int) -> list[dict]:
                 "query_embedding": embedding,
                 "match_count": k,
                 "min_similarity": MIN_SIMILARITY,
+                "query_text": query_text,
             },
         )
         .execute()
@@ -119,7 +120,7 @@ def _retrieve_matches(query: str, k: int) -> list[dict[str, Any]]:
     if not cleaned:
         return []
     embedding = _embed_query(cleaned)
-    return _match_chunks(embedding, k)
+    return _match_chunks(embedding, k, cleaned)
 
 
 def retrieve_policy_matches(query: str, k: int = DEFAULT_MATCH_COUNT) -> list[dict]:

@@ -6,24 +6,24 @@ output to insert the generated records into Supabase.
 Examples:
     python scripts/seed_orders.py --customers 100 --orders-per-customer 3
     python scripts/seed_orders.py --customers 100 --orders-per-customer 3 --insert
+    python scripts/seed_orders.py --existing-customers --customers 10 --orders-per-customer 1
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-
 from dotenv import load_dotenv
 from faker import Faker
 
-# This script imports no project modules, so it only needs the repo root to
-# resolve its default output path regardless of the caller's directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 TABLES = (
+    "product_catalog",
     "customers",
     "customer_addresses",
     "orders",
@@ -33,26 +33,26 @@ TABLES = (
     "order_events",
     "payments",
 )
+
 STATUSES = ["Processing", "In Transit", "Out for Delivery", "Delivered", "Cancelled", "Failed Delivery"]
+
 STATUS_WEIGHTS = [12, 16, 8, 54, 6, 4]
-ITEMS = [
-    "Wireless Headphones",
-    "USB-C Charger",
-    "Running Shoes",
-    "Coffee Maker",
-    "Laptop Stand",
-    "Water Bottle",
-    "Backpack",
-    "Desk Lamp",
-    "Phone Case",
-    "Bluetooth Speaker",
-    "Yoga Mat",
-    "Smart Watch",
-    "Power Bank",
-    "Mechanical Keyboard",
-    "Wireless Mouse",
-]
+
+PRODUCTS = json.loads((REPO_ROOT / "data" / "product_catalog.json").read_text(encoding="utf-8"))
+
+ITEMS = [product["name"] for product in PRODUCTS]
+
+PRODUCT_BY_NAME = {product["name"]: product for product in PRODUCTS}
+
+
+def catalog_sku(product_name: str) -> str:
+    """Generate the same stable legacy catalog SKU as migration 016."""
+    normalized = product_name.strip().lower()
+    return f"CAT-{hashlib.md5(normalized.encode('utf-8')).hexdigest()[:16]}"
+
+
 TIME_SLOTS = ["9 AM - 12 PM", "12 PM - 3 PM", "3 PM - 6 PM", "6 PM - 9 PM"]
+
 PRIORITIES = ["Standard", "Standard", "Standard", "Express", "Priority"]
 
 
@@ -72,10 +72,7 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
     )
     quantity = random.randint(1, 4)
     selected_items = random.sample(ITEMS, k=min(random.randint(1, 3), len(ITEMS)))
-    item_prices = [
-        Decimal(str(random.choice([299, 399, 499, 599, 799, 999, 1299, 1499, 1999, 2499, 2999, 3999, 4999, 6999])))
-        for _ in selected_items
-    ]
+    item_prices = [Decimal(str(PRODUCT_BY_NAME[item]["unit_price"])) for item in selected_items]
     subtotal = sum((price * quantity for price in item_prices), Decimal("0"))
     shipping_fee = Decimal("0") if status == "Cancelled" else Decimal(str(random.choice([0, 49, 69, 99, 149])))
     tax_amount = (subtotal * Decimal("0.18")).quantize(Decimal("0.01"))
@@ -98,12 +95,12 @@ def make_order(fake: Faker, customer_id: int, order_id: int) -> tuple[dict, list
     items = [
         {
             "order_id": order_id,
-            "product_sku": f"DEMO-{index + 1:03d}",
+            "product_sku": catalog_sku(item),
             "product_name": item,
             "quantity": quantity,
             "unit_price": str(price),
         }
-        for index, (item, price) in enumerate(zip(selected_items, item_prices))
+        for item, price in zip(selected_items, item_prices)
     ]
     shipment = None
     if status not in {"Cancelled", "Processing"}:
@@ -155,18 +152,19 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
     random.seed(seed)
     fake = Faker("en_IN")
     fake.seed_instance(seed)
-    records = {table: [] for table in TABLES}
+    records = empty_records()
+    customer_rows = []
+    addresses_by_customer = {}
     for customer_number in range(customers):
         full_name = fake.name()
         customer_id = customer_number + 1
-        records["customers"].append(
-            {
-                "id": customer_id,
-                "full_name": full_name,
-                "email": f"demo.{customer_number + 1}.{fake.user_name()}@example.test".lower(),
-                "phone": random_phone(),
-            }
-        )
+        customer = {
+            "id": customer_id,
+            "full_name": full_name,
+            "email": f"demo.{customer_number + 1}.{fake.user_name()}@example.test".lower(),
+            "phone": random_phone(),
+        }
+        records["customers"].append(customer)
         address = {
             "customer_id": customer_id,
             "label": "Home",
@@ -178,6 +176,50 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
             "is_default": True,
         }
         records["customer_addresses"].append(address)
+        customer_rows.append(customer)
+        addresses_by_customer[customer_id] = address
+
+    return add_orders_for_customers(
+        records, customer_rows, addresses_by_customer, orders_per_customer, start_order_id, fake
+    )
+
+
+def empty_records() -> dict[str, list[dict]]:
+    records = {table: [] for table in TABLES}
+    records["product_catalog"] = [
+        {"sku": catalog_sku(product["name"]), **product, "is_active": True}
+        for product in PRODUCTS
+    ]
+    return records
+
+
+def make_records_for_existing_customers(
+    customers: list[dict],
+    addresses_by_customer: dict[int, dict],
+    orders_per_customer: int,
+    start_order_id: int,
+    seed: int,
+) -> dict[str, list[dict]]:
+    """Generate order records for existing account IDs without customer writes."""
+    random.seed(seed)
+    fake = Faker("en_IN")
+    fake.seed_instance(seed)
+    return add_orders_for_customers(
+        empty_records(), customers, addresses_by_customer, orders_per_customer, start_order_id, fake
+    )
+
+
+def add_orders_for_customers(
+    records: dict[str, list[dict]],
+    customers: list[dict],
+    addresses_by_customer: dict[int, dict],
+    orders_per_customer: int,
+    start_order_id: int,
+    fake: Faker,
+) -> dict[str, list[dict]]:
+    for customer_number, customer in enumerate(customers):
+        customer_id = int(customer["id"])
+        address = addresses_by_customer[customer_id]
         for order_number in range(orders_per_customer):
             order_id = start_order_id + customer_number * orders_per_customer + order_number
             order, items, shipment, created_event, status_event, payment = make_order(fake, customer_id, order_id)
@@ -185,7 +227,7 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
             records["order_delivery_addresses"].append(
                 {
                     "order_id": order["public_order_id"],
-                    "recipient_name": full_name,
+                    "recipient_name": customer["full_name"],
                     "line1": address["line1"],
                     "city": address["city"],
                     "state_or_region": address["state_or_region"],
@@ -201,7 +243,62 @@ def make_records(customers: int, orders_per_customer: int, start_order_id: int, 
     return records
 
 
-def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
+def load_existing_customers(limit: int) -> tuple[list[dict], dict[int, dict], int]:
+    """Read existing customer IDs, names, default addresses, and latest order ID."""
+    load_dotenv()
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for --existing-customers."
+        )
+
+    from supabase import create_client
+
+    client = create_client(url, key).schema("order_support")
+    customer_response = (
+        client.table("customers").select("id, full_name").order("id").limit(1000).execute()
+    )
+    all_customers = customer_response.data or []
+    if not all_customers:
+        raise RuntimeError("No existing customers were found to associate with the new orders.")
+
+    customer_ids = [int(customer["id"]) for customer in all_customers]
+    address_response = (
+        client.table("customer_addresses")
+        .select("id, customer_id, line1, city, state_or_region, postal_code, country_code, is_default")
+        .in_("customer_id", customer_ids)
+        .order("id")
+        .limit(5000)
+        .execute()
+    )
+    address_rows = address_response.data or []
+    address_rows.sort(key=lambda row: (not row.get("is_default", False), row.get("id", 0)))
+    addresses_by_customer = {}
+    required_address_fields = ("line1", "city", "state_or_region", "postal_code", "country_code")
+    for address in address_rows:
+        customer_id = int(address["customer_id"])
+        if customer_id in customer_ids and all(address.get(field) for field in required_address_fields):
+            addresses_by_customer.setdefault(customer_id, address)
+
+    customers = [
+        customer for customer in all_customers if int(customer["id"]) in addresses_by_customer
+    ][:limit]
+    if not customers:
+        raise RuntimeError("No selected customers have a complete saved address for delivery.")
+
+    order_response = (
+        client.table("orders")
+        .select("public_order_id")
+        .order("public_order_id", desc=True)
+        .limit(1)
+        .execute()
+    )
+    latest_order_id = int(order_response.data[0]["public_order_id"]) if order_response.data else 0
+    return customers, addresses_by_customer, latest_order_id
+
+
+def insert_records(records: dict[str, list[dict]], batch_size: int, replace_orders: bool = False) -> None:
     load_dotenv()
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -213,15 +310,43 @@ def insert_records(records: dict[str, list[dict]], batch_size: int) -> None:
 
     from supabase import create_client
 
-    client = create_client(url, key)
+    client = create_client(url, key).schema("order_support")
+    catalog_rows = records["product_catalog"]
+    catalog_skus = [product["sku"] for product in catalog_rows]
+    existing_response = (
+        client.table("product_catalog").select("sku").in_("sku", catalog_skus).execute()
+    )
+    existing_skus = {row["sku"] for row in (existing_response.data or [])}
+    missing_catalog_rows = [product for product in catalog_rows if product["sku"] not in existing_skus]
+    if missing_catalog_rows:
+        client.table("product_catalog").insert(missing_catalog_rows).execute()
+    catalog_response = (
+        client.table("product_catalog")
+        .select("id, sku")
+        .in_("sku", catalog_skus)
+        .execute()
+    )
+    product_ids = {row["sku"]: row["id"] for row in (catalog_response.data or [])}
+    for item in records["order_items"]:
+        product_id = product_ids.get(item["product_sku"])
+        if product_id is None:
+            raise RuntimeError(f"Catalog item missing for SKU {item['product_sku']}.")
+        item["product_id"] = product_id
+
+    if replace_orders:
+        client.table("orders").delete().gte("public_order_id", 1).execute()
+        print("Cleared existing orders and their dependent records; customers and saved addresses were preserved.")
+
     for table in TABLES:
+        if table == "product_catalog":
+            continue
         rows = records[table]
         for start in range(0, len(rows), batch_size):
             batch = rows[start : start + batch_size]
             client.table(table).insert(batch).execute()
             print(f"Inserted {start + 1}-{start + len(batch)} of {len(rows)} {table} records.")
-    client.rpc("sync_order_number_sequence").execute()
-    client.rpc("sync_simple_id_sequences").execute()
+    client.rpc("sync_order_number_sequence", {}).execute()
+    client.rpc("sync_simple_id_sequences", {}).execute()
     print("Synchronized the next automatic order number.")
 
 
@@ -232,7 +357,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--customers", type=int, default=50, help="Number of unique fake customers (default: 50).")
     parser.add_argument("--orders-per-customer", type=int, default=2, help="Orders per customer (default: 2).")
     parser.add_argument(
-        "--start-order-id", type=int, default=1, help="First synthetic order ID, from 1 to 1000 (default: 1)."
+        "--existing-customers",
+        action="store_true",
+        help="Reuse existing customers and saved addresses; do not insert customer rows.",
+    )
+    parser.add_argument(
+        "--replace-orders",
+        action="store_true",
+        help="Delete all existing orders and dependent records before inserting; requires --existing-customers and --insert.",
+    )
+    parser.add_argument(
+        "--start-order-id",
+        type=int,
+        default=None,
+        help="First order ID; defaults to 1 for generated customers or the next available ID for existing customers.",
     )
     parser.add_argument("--seed", type=int, default=20260819, help="Seed for reproducible data.")
     parser.add_argument(
@@ -247,18 +385,49 @@ def main() -> None:
     args = parse_args()
     if args.customers < 1 or args.orders_per_customer < 1 or args.batch_size < 1:
         raise ValueError("--customers, --orders-per-customer, and --batch-size must be positive.")
+    if args.replace_orders and (not args.existing_customers or not args.insert):
+        raise ValueError("--replace-orders requires both --existing-customers and --insert.")
     generated_order_count = args.customers * args.orders_per_customer
-    if args.start_order_id < 1 or args.start_order_id + generated_order_count - 1 > 1000:
+
+    if args.existing_customers:
+        existing_customers, addresses_by_customer, latest_order_id = load_existing_customers(args.customers)
+        generated_order_count = len(existing_customers) * args.orders_per_customer
+        start_order_id = args.start_order_id if args.start_order_id is not None else (1 if args.replace_orders else latest_order_id + 1)
+        if not args.replace_orders and start_order_id <= latest_order_id:
+            raise ValueError("When reusing existing customers, --start-order-id must be above the current maximum.")
+        records = make_records_for_existing_customers(
+            existing_customers,
+            addresses_by_customer,
+            args.orders_per_customer,
+            start_order_id,
+            args.seed,
+        )
+    else:
+        start_order_id = args.start_order_id if args.start_order_id is not None else 1
+        records = make_records(args.customers, args.orders_per_customer, start_order_id, args.seed)
+
+    if start_order_id < 1 or start_order_id + generated_order_count - 1 > 1000:
         raise ValueError("Generated order IDs must stay within the supported range of 1 to 1000.")
 
-    records = make_records(args.customers, args.orders_per_customer, args.start_order_id, args.seed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(records, indent=2), encoding="utf-8")
-    print(f"Generated {len(records['orders'])} synthetic orders for {args.customers} customers at {args.output}.")
+    preview_records = records
+    if args.existing_customers:
+        preview_records = {table: list(rows) for table, rows in records.items()}
+        preview_records["order_delivery_addresses"] = [
+            {"order_id": address["order_id"], "delivery_address": "[omitted from preview]"}
+            for address in records["order_delivery_addresses"]
+        ]
+    args.output.write_text(json.dumps(preview_records, indent=2), encoding="utf-8")
+    customer_label = (
+        "existing customers (customer and saved-address records are not written)"
+        if args.existing_customers
+        else "new synthetic customers"
+    )
+    print(f"Generated {len(records['orders'])} synthetic orders for {customer_label} at {args.output}.")
     print(f"Order IDs: {records['orders'][0]['public_order_id']} through {records['orders'][-1]['public_order_id']}.")
 
     if args.insert:
-        insert_records(records, args.batch_size)
+        insert_records(records, args.batch_size, replace_orders=args.replace_orders)
 
 
 if __name__ == "__main__":

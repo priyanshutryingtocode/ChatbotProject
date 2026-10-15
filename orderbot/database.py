@@ -8,9 +8,10 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from .config import MAX_ORDER_ID, MIN_ORDER_ID, supabase_server_client
+from .config import MAX_ORDER_ID, MIN_ORDER_ID, order_support_client
 
 IST = timezone(timedelta(hours=5, minutes=30))
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,8 +19,6 @@ class DatabaseLookupError(RuntimeError):
     """The lookup could not reach or query the order database."""
 
 
-# Only columns the app actually reads. Identity filters are applied to the
-# embedded customer relation in the same request as the order lookup.
 ORDER_SELECT = """
     public_order_id, status, payment_status, currency, total_amount, ordered_at,
     customers!inner(full_name, email, phone),
@@ -67,7 +66,6 @@ def format_timestamp(timestamp: str | None) -> str:
     try:
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
-            # Database timestamps without an offset are stored as UTC.
             parsed = parsed.replace(tzinfo=timezone.utc)
         parsed = parsed.astimezone(IST)
         hour = parsed.strftime("%I").lstrip("0") or "0"
@@ -77,7 +75,7 @@ def format_timestamp(timestamp: str | None) -> str:
 
 
 def _client():
-    return supabase_server_client()
+    return order_support_client()
 
 
 def validate_order_id(order_id: int | str) -> int:
@@ -218,17 +216,21 @@ def format_order_for_display(order: dict | None) -> str:
     return "  \n".join(lines)
 
 
-def create_conversation(channel: str = "streamlit", session_id: str | None = None) -> str:
+def create_conversation(
+    channel: str = "streamlit", session_id: str | None = None, owner_user_id: str | None = None
+) -> str:
     """Create a conversation record and return its id. Best-effort, never raises.
 
-    `session_id` scopes the conversation to the browser session that created it
-    (migration 006). Without one, a conversation is stored unscoped and invisible
-    to every session — the fail-closed outcome, since it matches no filter.
+    `session_id` scopes the conversation to its browser session (migration 006);
+    `owner_user_id` scopes it to the authenticated account (migration 010).
+    Without an owner, it is not visible in the authenticated conversation list.
     """
     try:
         row = {"channel": channel}
         if session_id:
             row["session_id"] = session_id
+        if owner_user_id:
+            row["owner_user_id"] = owner_user_id
         response = _client().table("conversations").insert(row).execute()
         return (response.data or [{}])[0].get("id", "")
     except Exception:
@@ -281,12 +283,14 @@ def end_conversation(conversation_id: str) -> None:
         logger.exception("Failed to end conversation")
 
 
-def list_conversations(limit: int = 10, session_id: str | None = None) -> list[dict]:
+def list_conversations(
+    limit: int = 10, session_id: str | None = None, owner_user_id: str | None = None
+) -> list[dict]:
     """Most recent conversations, newest first. Best-effort, never raises.
 
-    Pass `session_id` to return only that browser session's conversations.
-    Omitting it returns every conversation, which is only safe for callers that
-    are not user-facing — the sidebar must always scope.
+    Pass `owner_user_id` to return only that account's conversations. Omitting
+    both scope arguments returns every conversation and is only safe for
+    non-user-facing callers.
     """
     try:
         query = (
@@ -298,20 +302,17 @@ def list_conversations(limit: int = 10, session_id: str | None = None) -> list[d
         )
         if session_id:
             query = query.eq("session_id", session_id)
+        if owner_user_id:
+            query = query.eq("owner_user_id", owner_user_id)
         return query.execute().data or []
     except Exception:
         logger.exception("Failed to list conversations")
         return []
 
 
-def conversation_belongs_to_session(conversation_id: str, session_id: str | None) -> bool:
-    """Whether a conversation was created by this browser session.
-
-    Guards the `?chat=` deep link and the recent-chats radio. Returns False for
-    an unscoped conversation (null session_id) so rows predating migration 006
-    stay unreachable.
-    """
-    if not conversation_id or not session_id:
+def conversation_belongs_to_user(conversation_id: str, user_id: str | None) -> bool:
+    """Whether an authenticated user owns this conversation; fail closed."""
+    if not conversation_id or not user_id:
         return False
     try:
         response = (
@@ -319,12 +320,12 @@ def conversation_belongs_to_session(conversation_id: str, session_id: str | None
             .table("conversations")
             .select("id")
             .eq("id", conversation_id)
-            .eq("session_id", session_id)
+            .eq("owner_user_id", user_id)
             .execute()
         )
         return bool(response.data)
     except Exception:
-        logger.exception("Failed to check conversation ownership")
+        logger.exception("Failed to check authenticated conversation ownership")
         return False
 
 

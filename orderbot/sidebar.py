@@ -18,14 +18,13 @@ from .orders import OrderCriteria, OrderLookup, lookup_order
 
 
 @st.cache_data(ttl=20, show_spinner=False)
-def _cached_recent_chats(session_id: str, limit: int = 10):
+def _cached_recent_chats(owner_user_id: str, limit: int = 10):
     """Brief cache so the sidebar stops querying Supabase on every rerun.
 
-    `session_id` is part of the cache key on purpose. st.cache_data is scoped to
-    the process, not the session, so without it one visitor's conversations
-    would be served to the next.
+    The authenticated owner is part of the key because st.cache_data is
+    process-scoped, not user-scoped.
     """
-    return list_conversations(limit, session_id=session_id)
+    return list_conversations(limit, owner_user_id=owner_user_id)
 
 
 def invalidate_recent_chats_cache() -> None:
@@ -65,14 +64,14 @@ def _on_recent_chat_change() -> None:
         st.session_state.resume_conversation_id = target_id
 
 
-def render_recent_chats(session_id: str) -> None:
-    """List this session's recent conversations; picking one resumes it.
+def render_recent_chats(owner_user_id: str) -> None:
+    """List this account's recent conversations; picking one resumes it.
 
     Selection is event-driven (radio on_change) — never inferred by comparing
     displayed state against the current view on every rerun, so a deliberate
     fresh start can't be overridden by whatever the radio happens to show.
     """
-    conversations = _cached_recent_chats(session_id)
+    conversations = _cached_recent_chats(owner_user_id)
     if not conversations:
         return
 
@@ -152,29 +151,26 @@ def render_manual_lookup_results() -> None:
                             st.markdown(f"- {format_event_line(event)}")
 
 
-def render_sidebar(session_id: str) -> None:
+def render_sidebar(owner_user_id: str, authenticated_email: str) -> None:
     with st.sidebar:
         st.header("Find an order")
-        st.caption("Verify with an order number and one matching detail.")
+        st.caption("Your verified email is matched to the order.")
 
         with st.form("manual_lookup_form", clear_on_submit=False):
             order_id = f"{st.number_input('Order number', min_value=MIN_ORDER_ID, max_value=MAX_ORDER_ID, value=MIN_ORDER_ID, step=1, format='%04d', key='lookup_order_number'):04d}"
-            st.caption("Add at least one more detail to verify the order before searching.")
-            email = st.text_input("Email address (optional)", placeholder="you@example.com", key="lookup_email")
-            phone = st.text_input("Phone number (optional)", placeholder="10-digit number", key="lookup_phone")
-            name = st.text_input("Customer name (optional)", placeholder="Full or partial name", key="lookup_name")
+            st.caption(f"Signed in as {authenticated_email}")
             submitted = st.form_submit_button("Find order", use_container_width=True, type="primary")
 
         if submitted:
-            validation_error = _validate_fields(order_id, email, phone, name)
+            validation_error = _validate_fields(order_id, authenticated_email, "", "")
             if validation_error:
                 st.session_state.pop("manual_lookup_results", None)
                 st.session_state.pop("manual_lookup_error", None)
                 st.error(validation_error)
             else:
-                secondary = next((value for value in (email, phone, name) if value.strip()), "")
+                secondary = authenticated_email
                 with st.spinner("Searching orders..."):
-                    result = _run_lookup(order_id, email, phone, name)
+                    result = _run_lookup(order_id, authenticated_email, "", "")
                 if result.status == "unavailable":
                     st.session_state.manual_lookup_results = []
                     st.session_state.manual_lookup_error = "Order lookup is temporarily unavailable. Please try again."
@@ -186,6 +182,6 @@ def render_sidebar(session_id: str) -> None:
                 st.session_state.manual_lookup_label = f"Order {order_id} + {secondary.strip()}"
 
         render_manual_lookup_results()
-        render_recent_chats(session_id)
+        render_recent_chats(owner_user_id)
 
         st.caption("Tip: use the chat for follow-up questions after an order is found.")

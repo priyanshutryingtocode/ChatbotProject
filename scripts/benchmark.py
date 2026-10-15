@@ -41,19 +41,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-# Running as `python scripts/<name>.py` puts scripts/ on sys.path rather than the
-# repository root, so orderbot would not resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv
-
 from orderbot import chat as chat_module
 from orderbot.retriever import _cached_query_embedding, retrieve_policy_matches
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# A real seeded customer, resolved at runtime rather than hard-coded, so the
-# verified-lookup scenarios exercise the same query shape the app uses.
 LOOKUP_ORDER_ID = 1
 
 
@@ -132,11 +127,6 @@ def measure(handler, message: str) -> dict:
     }
 
 
-# --- scenarios -------------------------------------------------------------
-# Each is (name, needs_identity) and runs against a fresh handler. Returns the
-# measured turn so multi-turn scenarios can be expressed as callables.
-
-
 def scenario_verification(identity):
     """Order number alone: the router asks for the second identity field."""
     order_id, _ = identity
@@ -169,7 +159,7 @@ def scenario_followup(identity):
     """
     order_id, email = identity
     handler = _fresh_handler()
-    measure(handler, f"order {order_id}, email {email}")  # establish context
+    measure(handler, f"order {order_id}, email {email}")
     return measure(handler, "is the item fragile, and can I refuse it at the door?")
 
 
@@ -180,16 +170,10 @@ SCENARIOS = {
     "followup": (scenario_followup, False),
 }
 
-# Which paths can reach the model, used only to annotate the report.
 USES_MODEL = {"verification": False, "lookup": False, "policy": True, "followup": True}
 
-# A deterministic turn that should have needed the model is a bug in the
-# scenario, not a fast result: assert on it rather than reporting a plausible-
-# looking sub-millisecond figure for a path that is supposed to be model-backed.
 FORCES_MODEL = {"followup"}
 
-# A remote generate call cannot complete faster than this; anything quicker
-# means no model was called.
 MODEL_FLOOR_MS = 250.0
 
 
@@ -199,8 +183,6 @@ def _stats(values: list[float]) -> dict:
         "min": round(min(ordered), 1),
         "median": round(statistics.median(ordered), 1),
         "max": round(max(ordered), 1),
-        # With 3-5 samples a true 95th percentile is not meaningful, so report
-        # the range and label it rather than implying precision we don't have.
         "spread": round(max(ordered) - min(ordered), 1),
     }
 
@@ -232,13 +214,10 @@ def run(iterations: int, include_cached: bool, names: list[str], min_interval: f
 
             samples = []
             degraded_count = 0
-            for _ in range(iterations + 2):  # allow a couple of retries
+            for _ in range(iterations + 2):
                 if len(samples) >= iterations:
                     break
                 if uses_model:
-                    # Free tier allows a handful of generate requests per minute.
-                    # Spacing them out avoids throttled samples being recorded as
-                    # very fast responses.
                     elapsed = time.monotonic() - last_model_call
                     if elapsed < min_interval:
                         time.sleep(min_interval - elapsed)
@@ -247,7 +226,6 @@ def run(iterations: int, include_cached: bool, names: list[str], min_interval: f
                 if sample["degraded"]:
                     degraded_count += 1
                     if degraded_count >= 3:
-                        # Persistently throttled; stop burning the quota budget.
                         break
                     continue
                 samples.append(sample)
@@ -267,9 +245,6 @@ def run(iterations: int, include_cached: bool, names: list[str], min_interval: f
                 "total_ms": _stats(total),
             }
 
-            # A model-backed scenario finishing in well under a second means the
-            # deterministic renderer caught it, so the scenario is no longer
-            # measuring what it claims. Flag rather than report.
             if name in FORCES_MODEL and entry["total_ms"]["median"] < MODEL_FLOOR_MS:
                 entry["unexpectedly_fast"] = True
 
@@ -280,7 +255,6 @@ def run(iterations: int, include_cached: bool, names: list[str], min_interval: f
                 entry["retrieval_chunks"] = len(matches)
 
                 if include_cached:
-                    # Embeddings are now warm, so this isolates generation cost.
                     elapsed = time.monotonic() - last_model_call
                     if elapsed < min_interval:
                         time.sleep(min_interval - elapsed)

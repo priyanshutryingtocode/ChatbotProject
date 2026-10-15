@@ -1,9 +1,8 @@
-"""Conversation loading and privacy-filtered persistence for the chat service."""
+"""Conversation loading and account-scoped transcript persistence."""
 
 import logging
-
 from .database import append_message, create_conversation, end_conversation, get_messages
-from .privacy import persisted_message
+from .privacy import is_legacy_transcript_placeholder
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +10,10 @@ logger = logging.getLogger(__name__)
 class ConversationStore:
     """Small adapter around transcript persistence; it stores no verification state."""
 
-    def __init__(self, conversation_id: str | None, session_id: str | None):
+    def __init__(self, conversation_id: str | None, session_id: str | None, owner_user_id: str | None = None):
         self.conversation_id = conversation_id
         self.session_id = session_id
+        self.owner_user_id = owner_user_id
 
     def load(self, stored_messages: list[dict] | None = None) -> list[tuple[str, str]]:
         if self.conversation_id and stored_messages is None:
@@ -26,17 +26,21 @@ class ConversationStore:
             ("human" if item.get("role") == "user" else "assistant", item.get("content", ""))
             for item in (stored_messages or [])
             if item.get("content")
+            and not is_legacy_transcript_placeholder(item.get("content", ""))
         ]
 
-    def append(self, role: str, content: str, order_context: bool = False) -> None:
+    def append(self, role: str, content: str) -> None:
         if not self.conversation_id:
-            self.conversation_id = create_conversation(session_id=self.session_id)
+            self.conversation_id = create_conversation(
+                session_id=self.session_id,
+                owner_user_id=self.owner_user_id,
+            )
         if not self.conversation_id:
             return
         append_message(
             self.conversation_id,
             "user" if role == "human" else role,
-            persisted_message(role, content, order_context=order_context),
+            content,
         )
 
     def end(self) -> None:

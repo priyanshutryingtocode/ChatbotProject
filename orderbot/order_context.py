@@ -1,5 +1,4 @@
 import re
-
 from .database import format_timestamp, related_one
 
 
@@ -41,7 +40,6 @@ CONTEXT_FIELD_KEYS = ("order", "status", "payment", "customer", "tracking", "car
 
 CONTEXT_BASELINE_FIELDS = {"order", "status"}
 
-# Public field names the lookup_order tool may request, aliased to canonical keys.
 FIELD_ALIASES = {
     "order": "order",
     "order_number": "order",
@@ -67,8 +65,6 @@ FIELD_ALIASES = {
     "product": "items",
 }
 
-# Intent keywords -> relevant context fields. The union of all matched groups is
-# applied on top of the always-on baseline.
 INTENT_MAP = [
     (re.compile(r"\b(?:delivery\s*driver|driver|drivers|who\s*is\s*delivering)\b"), {"driver"}),
     (

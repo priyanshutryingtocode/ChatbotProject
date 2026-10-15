@@ -11,8 +11,7 @@ import json
 from langchain_core.tools import tool
 
 from .order_context import format_database_context, normalize_field_keys
-from .orders import OrderCriteria, OrderLookup
-from .orders import lookup_order as perform_order_lookup
+from .orders import OrderCriteria, OrderLookup, lookup_order as perform_order_lookup
 from .retriever import search_policy_chunks
 
 
@@ -37,7 +36,6 @@ def get_order_status(
 def format_order_lookup_payload(result: OrderLookup, fields: list[str] | None = None) -> dict:
     """Convert the shared lookup result into the bounded model-tool payload."""
     if result.status != "found":
-        # Do not disclose whether an order ID exists or how many rows matched.
         status = "verification_failed" if result.status == "not_found" else result.status
         payload = {"status": status}
         if result.status == "need_more_info":
@@ -60,8 +58,6 @@ def format_order_lookup_payload(result: OrderLookup, fields: list[str] | None = 
     name_only = result.name_only
     selected = normalize_field_keys(fields) if fields else set()
     if name_only:
-        # A name is a lower-confidence verifier. Tool enforcement remains
-        # server-side, so an LLM cannot request payment or contact details.
         selected = {"order", "status", "delivery"}
     context = format_database_context(db_results, fields=selected if selected else None)
 

@@ -1,7 +1,6 @@
 """Application-level order lookup shared by chat, tools, and the sidebar."""
 
 from typing import Any, Mapping
-
 from .contracts import OrderCriteria, OrderLookup, OrderLookupStatus
 from .database import DatabaseLookupError, build_criteria, find_orders, validate_order_id
 from .state import VerificationState
